@@ -37,6 +37,35 @@ func GenerateScriptPubKey(address []byte) ([]byte, error) {
 	return gob.Encode(scriptPubKey)
 }
 
+// IsValidScriptPubKey 是否是有效的交易输入脚本
+func IsValidScriptPubKey(scriptPubKey []byte) bool {
+	var ops []Op
+	err := gob.Decode(scriptPubKey, ops)
+	if err != nil {
+		return false
+	}
+	if len(ops) != 2 {
+		return false
+	}
+	codes := []OPCODE{CHECKSIG, EQUALVERIFY, PUSH, HASH160, DUP}
+	requireNull := []bool{true, true, false, true, true}
+	for i, op := range ops {
+		if op.Code != codes[i] {
+			return false
+		}
+		if requireNull[i] {
+			if op.Data != nil {
+				return false
+			}
+		} else {
+			if op.Data == nil || len(op.Data) == 0 {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 // GenerateScriptSig 生成交易输入脚本
 func GenerateScriptSig(txHash []byte, key *ecdsa.PrivateKey) ([]byte, error) {
 	// 对交易哈希的签名
@@ -53,6 +82,24 @@ func GenerateScriptSig(txHash []byte, key *ecdsa.PrivateKey) ([]byte, error) {
 	}
 
 	return gob.Encode(scriptSig)
+}
+
+// IsValidScriptSig 是否是有效的交易输入脚本
+func IsValidScriptSig(scriptSig []byte) bool {
+	var ops []Op
+	err := gob.Decode(scriptSig, ops)
+	if err != nil {
+		return false
+	}
+	if len(ops) != 2 {
+		return false
+	}
+	for _, op := range ops {
+		if op.Code != PUSH || op.Data == nil || len(op.Data) == 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // Verify 验证输入脚本是否可消费输出脚本的金额

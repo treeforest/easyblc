@@ -1,2 +1,4 @@
 vendor/
 .idea/
+cmd/cli/BLC/
+cmd/cli/wallets.bat

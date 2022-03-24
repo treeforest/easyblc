@@ -66,13 +66,17 @@ func (m *WalletManager) Addresses() []string {
 	return addresses
 }
 
-func (m *WalletManager) Has(address string) bool {
-	for _, addr := range m.Addresses() {
-		if addr == address {
-			return true
-		}
+func (m *WalletManager) GetWallet(address string) (*wallet.Wallet, error) {
+	i, has := m.Keys[address]
+	if !has {
+		return nil, errors.New("not found address")
 	}
-	return false
+	return m.Wallets[i], nil
+}
+
+func (m *WalletManager) Has(address string) bool {
+	_, has := m.Keys[address]
+	return has
 }
 
 func (m *WalletManager) save() error {

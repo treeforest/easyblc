@@ -52,13 +52,22 @@ func NewTransaction(vins []*TxInput, vouts []*TxOutput) (*Transaction, error) {
 
 // HashTransaction 生成交易哈希
 func (tx *Transaction) HashTransaction() error {
-	data, err := gob.Encode(tx)
+	hash, err := tx.CalculateHash()
 	if err != nil {
 		return err
 	}
-	hash := sha256.Sum256(data)
-	tx.Hash = hash[:]
+	tx.Hash = hash
 	return nil
+}
+
+// CalculateHash 计算区块哈希
+func (tx *Transaction) CalculateHash() ([]byte, error) {
+	data, err := gob.Encode(tx)
+	if err != nil {
+		return nil, err
+	}
+	hash := sha256.Sum256(data)
+	return hash[:], nil
 }
 
 // VerifyTransaction 验证交易合法性

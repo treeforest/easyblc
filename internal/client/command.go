@@ -127,30 +127,71 @@ func (c *Command) getBalance() {
 }
 
 func (c *Command) send(from, to string, amount uint32) {
+	// 检查地址格式
 	if utils.IsValidAddress(from) {
 		log.Fatal("FROM is not a valid address")
 	}
 	if utils.IsValidAddress(to) {
 		log.Fatal("TO is not a valid address")
 	}
+
+	// 检查from是否是钱包地址
 	mgr := walletmgr.New()
 	if !mgr.Has(from) {
 		log.Fatal("you don't have the wallet that address is ", from)
 	}
+	wallet, err := mgr.GetWallet(from)
+	if err != nil {
+		log.Fatal("not found wallet:", err)
+	}
 
 	bc := blc.GetBlockChain()
 	defer bc.Close()
+
+	// 检查余额
 	balance, err := bc.GetBalance(from)
 	if err != nil {
 		log.Fatal("get balance failed: ", err)
 	}
 	if balance < amount {
-		log.Fatal("余额不足")
+		log.Fatal("lack of balance")
 	}
 
-	// 创建交易
+	// 交易输入
+	var vins []*blc.TxInput
+	utxoSet, _ := bc.GetUTXOSet(from)
+	for txId, outputs := range utxoSet {
+		for index, _ := range outputs {
+			vin, err := blc.NewTxInput([]byte(txId), uint32(index), &wallet.Key)
+			if err != nil {
+				log.Fatal("create tx vin failed:", err)
+			}
+			vins = append(vins, vin)
+		}
+
+	}
+
+	// 交易输出
+	var vouts []*blc.TxOutput
+	vout, err := blc.NewTxOutput(amount, to)
+	if err != nil {
+		log.Fatal("create tx vout failed:", err)
+	}
+	vouts = append(vouts, vout)
+
+	// 构造交易
+	tx, err := blc.NewTransaction(vins, vouts)
+	if err != nil {
+		log.Fatal("create transaction failed:", err)
+	}
+
+	// 将交易放入交易池
+	if err = bc.PutTxToPool(tx); err != nil {
+		log.Fatal("put tx to pool failed:", err)
+	}
 
 	// 挖矿
+
 }
 
 func (c *Command) parseCommand(f *flag.FlagSet) bool {
