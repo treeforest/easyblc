@@ -7,7 +7,7 @@ import (
 
 func TestWalletManager(t *testing.T) {
 	mgr := New()
-	err := mgr.CreateWallet()
+	_, err := mgr.CreateWallet()
 	require.NoError(t, err)
 
 	for addr, wallet := range mgr.Wallets {

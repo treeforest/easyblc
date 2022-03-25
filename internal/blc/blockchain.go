@@ -2,19 +2,24 @@ package blc
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"github.com/treeforest/easyblc/internal/blc/dao"
 	"github.com/treeforest/easyblc/internal/blc/script"
-	"github.com/treeforest/easyblc/pkg/base58check"
-	"github.com/treeforest/easyblc/pkg/merkle"
 	"github.com/treeforest/easyblc/pkg/utils"
 	log "github.com/treeforest/logger"
+	"time"
+)
+
+const (
+	COIN = 100000000 // 1个币 = 100,000,000 聪
 )
 
 type BlockChain struct {
-	dao     *dao.DAO
-	utxoSet UTXOSet
-	pool    *TxPool
+	dao         *dao.DAO // data access object
+	utxoSet     UTXOSet  // utxo set
+	txPool      *TxPool  // transaction pool
+	latestBlock *Block   // 最新区块
 }
 
 func GetBlockChain() *BlockChain {
@@ -25,14 +30,25 @@ func GetBlockChain() *BlockChain {
 	if err != nil {
 		log.Fatal("load block database failed: ", err)
 	}
-	blc := &BlockChain{dao: d, pool: NewTxPool()}
+	blc := &BlockChain{dao: d, txPool: NewTxPool()}
 
 	utxoSet, err := blc.FindAllUTXOSet()
 	if err != nil {
 		log.Fatal("find utxo set failed:", err)
 	}
-
 	blc.utxoSet = utxoSet
+
+	data, err := blc.dao.GetBlock(blc.dao.GetLatestBlockHash())
+	if err != nil {
+		log.Fatal("get block failed:", err)
+	}
+	var block Block
+	err = block.Unmarshal(data)
+	if err != nil {
+		log.Fatal("block unmarshal failed:", err)
+	}
+	blc.latestBlock = &block
+
 	return blc
 }
 
@@ -40,42 +56,63 @@ func CreateBlockChainWithGenesisBlock(address string) *BlockChain {
 	if !dao.IsNotExistDB() {
 		log.Fatal("block database already exist")
 	}
-	if _, err := base58check.Decode([]byte(address)); err != nil {
-		log.Fatalf("%s is not a address", address)
+
+	if !utils.IsValidAddress(address) {
+		log.Fatalf("invalid address: %s", address)
 	}
-	blc := &BlockChain{dao: dao.New()}
-	// todo: 奖励应该是 创币奖励+交易费
-	coinbaseTx, err := NewCoinbaseTransaction(50, address)
+
+	blc := &BlockChain{
+		dao:         dao.New(),
+		utxoSet:     UTXOSet{},
+		txPool:      NewTxPool(),
+		latestBlock: nil,
+	}
+
+	reward := blc.GetBlockSubsidy(0)
+	coinbaseTx, err := NewCoinbaseTransaction(reward, address, []byte("挖矿不容易，且挖且珍惜"))
 	if err != nil {
 		log.Fatal("create coinbase transaction failed:", err)
 	}
-	block := CreateGenesisBlock([]*Transaction{coinbaseTx})
-	block.MerkleTree = &merkle.Tree{}
-	blockBytes, err := block.Marshal()
-	if err != nil {
-		log.Fatal("block marshal failed:", err)
+
+	block, succ := CreateGenesisBlock([]*Transaction{coinbaseTx})
+	if !succ {
+		log.Fatal("create Genesis Block failed")
 	}
-	err = blc.dao.AddBlock(block.Hash, blockBytes)
+
+	err = blc.AddBlock(block)
 	if err != nil {
-		log.Fatal("add block to db failed: ", err)
+		log.Fatal("add block to chain failed:", err)
 	}
+
 	return blc
 }
 
-func (blc *BlockChain) Close() {
-	if err := blc.dao.Close(); err != nil {
+func (chain *BlockChain) AddBlock(block *Block) error {
+	blockBytes, err := block.Marshal()
+	if err != nil {
+		return fmt.Errorf("block marshal failed:%v", err)
+	}
+	err = chain.dao.AddBlock(block.Hash, blockBytes)
+	if err != nil {
+		return fmt.Errorf("add block to db failed:%v", err)
+	}
+	return nil
+}
+
+func (chain *BlockChain) Close() {
+	if err := chain.dao.Close(); err != nil {
 		log.Fatal("close database failed: ", err)
 	}
 }
 
 // GetBlockIterator 返回区块迭代器
-func (blc *BlockChain) GetBlockIterator() *BlockIterator {
-	return NewBlockIterator(blc.dao)
+func (chain *BlockChain) GetBlockIterator() *BlockIterator {
+	return NewBlockIterator(chain.dao)
 }
 
 // Traverse 遍历区块链
-func (blc *BlockChain) Traverse(fn func(block *Block)) error {
-	it := blc.GetBlockIterator()
+func (chain *BlockChain) Traverse(fn func(block *Block)) error {
+	it := chain.GetBlockIterator()
 	for {
 		b, err := it.Next()
 		if err != nil {
@@ -90,8 +127,8 @@ func (blc *BlockChain) Traverse(fn func(block *Block)) error {
 }
 
 // IsValidTx 验证交易合法性，并返回矿工费
-func (blc *BlockChain) IsValidTx(tx *Transaction) (uint32, bool) {
-	var inputAmount, outputAmount, fee uint32
+func (chain *BlockChain) IsValidTx(tx *Transaction) (uint64, bool) {
+	var inputAmount, outputAmount, fee uint64
 
 	// 验证交易哈希
 	hash, err := tx.CalculateHash()
@@ -109,9 +146,9 @@ func (blc *BlockChain) IsValidTx(tx *Transaction) (uint32, bool) {
 		if vin.IsCoinbase() {
 			continue
 		}
-		outputs, ok := blc.utxoSet[string(vin.TxId)]
+		outputs, ok := chain.utxoSet[string(vin.TxId)]
 		if !ok {
-			log.Debug("not found utxo")
+			log.Debugf("not found utxo => txid[%x]", vin.TxId)
 			return 0, false
 		}
 		output, ok := outputs[int(vin.Vout)]
@@ -120,7 +157,7 @@ func (blc *BlockChain) IsValidTx(tx *Transaction) (uint32, bool) {
 			log.Debug("not found txoutput")
 			return 0, false
 		}
-		// 是否为有效的输入脚本
+		// 是否为有效地输入脚本
 		ok = script.IsValidScriptSig(vin.ScriptSig)
 		if !ok {
 			log.Debug("invalid scriptsig")
@@ -141,7 +178,7 @@ func (blc *BlockChain) IsValidTx(tx *Transaction) (uint32, bool) {
 			log.Debug("invalid output address")
 			return 0, false
 		}
-		// 是否为有效的输出脚本
+		// 是否为有效地输出脚本
 		if !script.IsValidScriptPubKey(vout.ScriptPubKey) {
 			log.Debug("invalid scriptpubkey")
 			return 0, false
@@ -159,4 +196,56 @@ func (blc *BlockChain) IsValidTx(tx *Transaction) (uint32, bool) {
 	fee = inputAmount - outputAmount
 
 	return fee, true
+}
+
+func (chain *BlockChain) GetBlockSubsidy(height uint64) uint64 {
+	var halvings uint64 = height / 210000
+	if halvings > 64 {
+		return 0
+	}
+	subsidy := uint64(50 * COIN)
+	subsidy = subsidy >> halvings // 每210000个区块奖励减半
+	return subsidy
+}
+
+// MineBlock 挖矿
+func (chain *BlockChain) MineBlock(address string) error {
+	if chain.latestBlock == nil {
+		return errors.New("latest block is nil")
+	}
+
+	var reward, minerFee uint64 = 0, 0
+	txs := make([]*Transaction, 0)
+
+	// 从交易池中取出交易,并计算奖励：挖矿奖励+矿工费
+	entries := chain.GetTxsFromTxPool(16)
+	for _, entry := range entries {
+		minerFee += entry.Fee
+		txs = append(txs, entry.Tx)
+	}
+	reward = chain.GetBlockSubsidy(chain.latestBlock.Height + 1)
+
+	var (
+		block *Block
+		succ  bool // 挖矿是否成功
+	)
+	for {
+		// 构造创币交易
+		coinbaseTx, err := NewCoinbaseTransaction(reward+minerFee, address, []byte(time.Now().String()))
+		if err != nil {
+			log.Fatal("create coinbase transaction failed:", err)
+		}
+		block, succ = NewBlock(chain.latestBlock.Height+1, chain.latestBlock.Hash,
+			append([]*Transaction{coinbaseTx}, txs...))
+		if succ {
+			break
+		}
+	}
+
+	err := chain.AddBlock(block)
+	if err != nil {
+		return fmt.Errorf("add block to chain failed: %v", err)
+	}
+
+	return nil
 }

@@ -1,10 +1,8 @@
 package blc
 
 import (
-	"bytes"
 	"fmt"
-	"github.com/treeforest/easyblc/internal/blc/script"
-	"github.com/treeforest/easyblc/pkg/base58check"
+	log "github.com/treeforest/logger"
 )
 
 type UTXOSet map[string]map[int]*TxOutput // TxId => Index => TxOut
@@ -16,27 +14,34 @@ type UTXO struct {
 }
 
 // FindAllUTXOSet 获取所有的utxo
-func (blc *BlockChain) FindAllUTXOSet() (UTXOSet, error) {
+func (chain *BlockChain) FindAllUTXOSet() (UTXOSet, error) {
 	utxoSet := make(UTXOSet)
 	spent := make(map[string]map[uint32]struct{})
-	err := blc.Traverse(func(block *Block) {
+	log.Debug("[utxo set]")
+	err := chain.Traverse(func(block *Block) {
 		for _, tx := range block.Transactions {
+			// 交易输入
 			for _, vin := range tx.Vins {
-				if _, ok := spent[string(vin.TxId)]; !ok {
-					spent[string(vin.TxId)] = map[uint32]struct{}{vin.Vout: {}}
+				if vin.IsCoinbase() {
 					continue
+				}
+				if _, ok := spent[string(vin.TxId)]; !ok {
+					spent[string(vin.TxId)] = make(map[uint32]struct{})
 				}
 				spent[string(vin.TxId)][vin.Vout] = struct{}{}
 			}
+			// 交易输出
 			for i, out := range tx.Vouts {
-				_, exist := spent[string(tx.Hash)][uint32(i)]
-				if exist {
-					delete(spent[string(tx.Hash)], uint32(i))
-					continue
+				if v, ok := spent[string(tx.Hash)]; ok {
+					if _, ok = v[uint32(i)]; ok {
+						// 被花费
+						delete(spent[string(tx.Hash)], uint32(i))
+						continue
+					}
 				}
+				log.Debugf("txid:%x\tindex:%d\taddress:%s\tvalue:%d", tx.Hash, i, out.Address, out.Value)
 				if _, ok := utxoSet[string(tx.Hash)]; !ok {
-					utxoSet[string(tx.Hash)] = map[int]*TxOutput{i: out}
-					continue
+					utxoSet[string(tx.Hash)] = make(map[int]*TxOutput)
 				}
 				utxoSet[string(tx.Hash)][i] = out
 			}
@@ -48,12 +53,12 @@ func (blc *BlockChain) FindAllUTXOSet() (UTXOSet, error) {
 	return utxoSet, nil
 }
 
-func (blc *BlockChain) GetBalance(address string) (uint32, error) {
-	utxoSet, err := blc.GetUTXOSet(address)
+func (chain *BlockChain) GetBalance(address string) (uint64, error) {
+	utxoSet, err := chain.GetUTXOSet(address)
 	if err != nil {
 		return 0, err
 	}
-	var amount uint32 = 0
+	var amount uint64 = 0
 	for _, outputs := range utxoSet {
 		for _, output := range outputs {
 			amount += output.Value
@@ -63,33 +68,17 @@ func (blc *BlockChain) GetBalance(address string) (uint32, error) {
 }
 
 // GetUTXOSet 获取UTXO集合
-func (blc *BlockChain) GetUTXOSet(address string) (UTXOSet, error) {
-	spent, err := blc.GetSpentOutput(address)
-	if err != nil {
-		return nil, err
-	}
-
+func (chain *BlockChain) GetUTXOSet(address string) (UTXOSet, error) {
 	utxoSet := make(UTXOSet)
-	err = blc.Traverse(func(block *Block) {
+	err := chain.Traverse(func(block *Block) {
 		for _, tx := range block.Transactions {
 			for i, vout := range tx.Vouts {
-
 				if address != vout.Address {
 					continue
 				}
-
-				out, ok := spent[string(tx.Hash)]
-				if ok {
-					_, ok = out[uint32(i)]
-					if ok {
-						// transaction output was already spend
-						continue
-					}
-				}
-
 				// find unspent transaction output
-				if _, ok = utxoSet[string(tx.Hash)]; !ok {
-					utxoSet[string(tx.Hash)] = map[int]*TxOutput{i: vout}
+				if _, ok := utxoSet[string(tx.Hash)]; !ok {
+					utxoSet[string(tx.Hash)] = make(map[int]*TxOutput)
 				}
 				utxoSet[string(tx.Hash)][i] = vout
 			}
@@ -98,26 +87,17 @@ func (blc *BlockChain) GetUTXOSet(address string) (UTXOSet, error) {
 	if err != nil {
 		return nil, fmt.Errorf("traverse block error:%v", err)
 	}
-	return utxoSet, nil
-}
 
-// GetSpentOutput 当前地址address已花费的输出
-func (blc *BlockChain) GetSpentOutput(address string) (map[string]map[uint32]struct{}, error) {
-	hash160, err := base58check.Decode([]byte(address))
-	if err != nil {
-		return nil, fmt.Errorf("address format error: %v", err)
-	}
-	spent := make(map[string]map[uint32]struct{})
-	err = blc.Traverse(func(block *Block) {
+	// remove spent utxo
+	err = chain.Traverse(func(block *Block) {
 		for _, tx := range block.Transactions {
 			for _, vin := range tx.Vins {
-				if vin.IsCoinbase() {
-					// coinbase transaction
+				if _, ok := utxoSet[string(vin.TxId)]; !ok {
 					continue
 				}
-				pubKeyHash := script.ParsePubKeyHashFromScriptSig(vin.ScriptSig)
-				if bytes.Equal(hash160, pubKeyHash) {
-					spent[string(vin.TxId)][vin.Vout] = struct{}{}
+				delete(utxoSet[string(vin.TxId)], int(vin.Vout))
+				if len(utxoSet[string(vin.TxId)]) == 0 {
+					delete(utxoSet, string(vin.TxId))
 				}
 			}
 		}
@@ -125,5 +105,6 @@ func (blc *BlockChain) GetSpentOutput(address string) (map[string]map[uint32]str
 	if err != nil {
 		return nil, fmt.Errorf("traverse block error:%v", err)
 	}
-	return spent, nil
+
+	return utxoSet, nil
 }

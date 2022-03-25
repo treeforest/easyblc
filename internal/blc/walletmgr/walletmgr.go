@@ -40,12 +40,15 @@ func (m *WalletManager) init() {
 	}
 }
 
-func (m *WalletManager) CreateWallet() error {
+func (m *WalletManager) CreateWallet() (*wallet.Wallet, error) {
 	w := wallet.New()
 	address := string(w.GetAddress())
 	m.Keys[address] = len(m.Wallets)
 	m.Wallets = append(m.Wallets, w)
-	return m.save()
+	if err := m.save(); err != nil {
+		return nil, err
+	}
+	return w, nil
 }
 
 func (m *WalletManager) RemoveWallet(address string) error {

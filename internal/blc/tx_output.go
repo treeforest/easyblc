@@ -6,12 +6,12 @@ import (
 )
 
 type TxOutput struct {
-	Value        uint32 // 金额
+	Value        uint64 // 金额
 	Address      string // 地址
 	ScriptPubKey []byte // 锁定脚本
 }
 
-func NewTxOutput(value uint32, address string) (*TxOutput, error) {
+func NewTxOutput(value uint64, address string) (*TxOutput, error) {
 	out := &TxOutput{
 		Value:        value,
 		Address:      address,

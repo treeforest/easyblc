@@ -1,6 +1,7 @@
 package blc
 
 import (
+	"fmt"
 	"github.com/treeforest/easyblc/internal/blc/dao"
 	"math/big"
 )
@@ -29,13 +30,14 @@ func (it *BlockIterator) Next() (*Block, error) {
 	var block Block
 	data, err := it.dao.GetBlock(it.cur)
 	if err != nil {
-		return nil, err
-	}
-	if data == nil {
-		return nil, nil
+		return nil, fmt.Errorf("get block from database failed:%v", err)
 	}
 
-	block.Unmarshal(data)
+	err = block.Unmarshal(data)
+	if err != nil {
+		return nil, fmt.Errorf("block unmarshal failed:%v", err)
+	}
+
 	it.cur = block.PreHash
 	return &block, nil
 }

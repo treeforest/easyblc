@@ -1,9 +1,8 @@
 package blc
 
 import (
-	"bytes"
 	"crypto/sha256"
-	"fmt"
+	"math"
 	"math/big"
 	"strconv"
 )
@@ -21,7 +20,7 @@ func NewProofOfWork(block *Block) *ProofOfWork {
 }
 
 // Mining 挖矿
-func (pow *ProofOfWork) Mining() ([]byte, uint64) {
+func (pow *ProofOfWork) Mining() ([]byte, uint64, bool) {
 	var (
 		data    []byte
 		nonce   uint64   = 0 // 碰撞次数
@@ -29,13 +28,7 @@ func (pow *ProofOfWork) Mining() ([]byte, uint64) {
 		hashInt big.Int      // 哈希对应的大整数
 	)
 	// 组装挖矿结构 |preHash|height|timestamp|merkelRoot|targetBit|nonce|
-	data = bytes.Join([][]byte{
-		pow.block.PreHash,
-		[]byte(strconv.FormatInt(pow.block.Height, 10)),
-		[]byte(strconv.FormatInt(pow.block.Time, 10)),
-		pow.block.MerkelRoot,
-		[]byte(fmt.Sprintf("%d", pow.block.Bits)),
-	}, []byte{})
+	data = pow.block.MarshalHeaderWithoutNonceAndHash()
 	for {
 		hash = sha256.Sum256(append(data, []byte(strconv.FormatUint(nonce, 10))...))
 		hashInt.SetBytes(hash[:])
@@ -43,6 +36,20 @@ func (pow *ProofOfWork) Mining() ([]byte, uint64) {
 			break // 挖到区块
 		}
 		nonce++
+		if nonce == math.MaxUint64 {
+			// 当前组合的最大值都没能挖出区块， 需要进一步修改coinbase data
+			return nil, 0, false
+		}
 	}
-	return hash[:], nonce
+	return hash[:], nonce, true
+}
+
+// GetNextWorkRequired 计算难度目标值，规定30秒出一个块
+func (pow *ProofOfWork) GetNextWorkRequired() {
+	// TODO
+}
+
+// CalculateNextWorkRequired 计算下个区块的目标值
+func (pow *ProofOfWork) CalculateNextWorkRequired() {
+	// TODO
 }

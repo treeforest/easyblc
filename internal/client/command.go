@@ -7,7 +7,9 @@ import (
 	"github.com/treeforest/easyblc/internal/blc/walletmgr"
 	"github.com/treeforest/easyblc/pkg/utils"
 	log "github.com/treeforest/logger"
+	"math/rand"
 	"os"
+	"time"
 )
 
 type Command struct{}
@@ -23,7 +25,7 @@ func (c *Command) printUsage() {
 	fmt.Printf("\t\t-address -- 接收创世区块奖励的地址\n")
 	// 打印区块信息
 	fmt.Printf("\tprinfchain -- 输出区块链信息\n")
-	// 转账 todo
+	// 转账
 	fmt.Printf("\tsend -from FROM -to TO -amount AMOUNT -- 发起转账\n")
 	fmt.Printf("\t\t-from FROM -- 转账源地址\n")
 	fmt.Printf("\t\t-to TO -- 转账目标地址\n")
@@ -35,7 +37,6 @@ func (c *Command) printUsage() {
 	fmt.Printf("\taddresses -- 获取钱包地址列表\n")
 	// 余额
 	fmt.Printf("\tgetbalance -- 获取钱包余额\n")
-	fmt.Printf("\t\t-address ACCOUNT -- 钱包地址\n")
 }
 
 func (c *Command) Run() {
@@ -77,7 +78,7 @@ func (c *Command) Run() {
 		if !c.parseCommand(cmdSend) || *from == "" || *to == "" || *amount <= 0 {
 			goto HELP
 		}
-		c.send(*from, *to, uint32(*amount))
+		c.send(*from, *to, uint64(*amount))
 	case "createwallet":
 		if !c.parseCommand(cmdCreateWallet) {
 			goto HELP
@@ -110,7 +111,7 @@ func (c *Command) getBalance() {
 	bc := blc.GetBlockChain()
 	defer bc.Close()
 
-	total := uint32(0)
+	total := uint64(0)
 	res := ""
 	mgr := walletmgr.New()
 	for _, addr := range mgr.Addresses() {
@@ -126,12 +127,12 @@ func (c *Command) getBalance() {
 	fmt.Println(res)
 }
 
-func (c *Command) send(from, to string, amount uint32) {
+func (c *Command) send(from, to string, amount uint64) {
 	// 检查地址格式
-	if utils.IsValidAddress(from) {
+	if !utils.IsValidAddress(from) {
 		log.Fatal("FROM is not a valid address")
 	}
-	if utils.IsValidAddress(to) {
+	if !utils.IsValidAddress(to) {
 		log.Fatal("TO is not a valid address")
 	}
 
@@ -168,8 +169,21 @@ func (c *Command) send(from, to string, amount uint32) {
 			}
 			vins = append(vins, vin)
 		}
-
 	}
+
+	// 生成一个找零地址
+	addresses := mgr.Addresses()
+	rand.Seed(time.Now().UnixNano())
+	changeAddress := addresses[rand.Intn(len(addresses))]
+	log.Debug("找零地址：", changeAddress)
+
+	// 手续费
+	fee := uint64(0)
+	if balance-amount > 50 {
+		fee = 50
+	}
+	log.Debug("找零:", balance-amount-fee)
+	log.Debug("手续费:", fee)
 
 	// 交易输出
 	var vouts []*blc.TxOutput
@@ -177,7 +191,11 @@ func (c *Command) send(from, to string, amount uint32) {
 	if err != nil {
 		log.Fatal("create tx vout failed:", err)
 	}
-	vouts = append(vouts, vout)
+	changeVout, err := blc.NewTxOutput(balance-amount-fee, changeAddress)
+	if err != nil {
+		log.Fatal("create tx vout failed:", err)
+	}
+	vouts = append(vouts, []*blc.TxOutput{vout, changeVout}...)
 
 	// 构造交易
 	tx, err := blc.NewTransaction(vins, vouts)
@@ -186,12 +204,14 @@ func (c *Command) send(from, to string, amount uint32) {
 	}
 
 	// 将交易放入交易池
-	if err = bc.PutTxToPool(tx); err != nil {
+	if err = bc.AddToTxPool(tx); err != nil {
 		log.Fatal("put tx to pool failed:", err)
 	}
 
 	// 挖矿
-
+	if err = bc.MineBlock(from); err != nil {
+		log.Fatal("mine block failed:", err)
+	}
 }
 
 func (c *Command) parseCommand(f *flag.FlagSet) bool {
@@ -224,10 +244,11 @@ func (c *Command) removeWallet(address string) {
 
 func (c *Command) createWallet() {
 	mgr := walletmgr.New()
-	if err := mgr.CreateWallet(); err != nil {
+	w, err := mgr.CreateWallet()
+	if err != nil {
 		log.Fatal("create wallet failed: ", err)
 	}
-	log.Info("create wallet success")
+	log.Infof("create wallet success, address=%s", w.GetAddress())
 }
 
 func (c *Command) createBlockChainWithGenesisBlock(address string) {
@@ -264,11 +285,13 @@ func (c *Command) printChain() {
 				}
 			}
 			fmt.Printf("\t\tVouts:\n")
-			for _, vout := range tx.Vouts {
+			for index, vout := range tx.Vouts {
+				fmt.Printf("\t\t\tindex: %d\n", index)
 				fmt.Printf("\t\t\tvalue: %d\n", vout.Value)
 				fmt.Printf("\t\t\taddress: %s\n", vout.Address)
 				fmt.Printf("\t\t\tscriptPubKey: %x\n", vout.ScriptPubKey)
 			}
+			fmt.Printf("\n")
 		}
 	})
 	if err != nil {

@@ -3,8 +3,6 @@ package blc
 import (
 	"crypto/sha256"
 	"fmt"
-	log "github.com/treeforest/logger"
-	"math/big"
 	"time"
 
 	gob "github.com/treeforest/easyblc/pkg/gob"
@@ -18,8 +16,8 @@ type Transaction struct {
 }
 
 // NewCoinbaseTransaction coinbase 交易
-func NewCoinbaseTransaction(reward uint32, address string) (*Transaction, error) {
-	input := NewCoinbaseTxInput([]byte("挖矿不容易，切挖且珍惜"))
+func NewCoinbaseTransaction(reward uint64, address string, coinbaseData []byte) (*Transaction, error) {
+	input := NewCoinbaseTxInput(coinbaseData)
 	output, err := NewTxOutput(reward, address)
 	if err != nil {
 		return nil, fmt.Errorf("create coinbase transaction output error:%v", err)
@@ -40,6 +38,7 @@ func NewCoinbaseTransaction(reward uint32, address string) (*Transaction, error)
 // NewTransaction 普通转账交易
 func NewTransaction(vins []*TxInput, vouts []*TxOutput) (*Transaction, error) {
 	tx := &Transaction{
+		Hash:  nil,
 		Vins:  vins,
 		Vouts: vouts,
 		Time:  time.Now().UnixNano(),
@@ -62,7 +61,9 @@ func (tx *Transaction) HashTransaction() error {
 
 // CalculateHash 计算区块哈希
 func (tx *Transaction) CalculateHash() ([]byte, error) {
-	data, err := gob.Encode(tx)
+	tmp := *tx
+	tmp.Hash = nil
+	data, err := gob.Encode(&tmp)
 	if err != nil {
 		return nil, err
 	}
@@ -70,34 +71,34 @@ func (tx *Transaction) CalculateHash() ([]byte, error) {
 	return hash[:], nil
 }
 
-// VerifyTransaction 验证交易合法性
-func (blc *BlockChain) VerifyTransaction(target *Transaction) {
-	blc.Traverse(func(block *Block) {
-		//for _, tx := range block.Transactions {
-		//
-		//}
-	})
-}
-
-func (blc *BlockChain) VerifyTxInput(in *TxInput) bool {
-	if in.IsCoinbase() {
-		if in.ScriptSig != nil {
-			log.Warn("coinbase script sig is not nil")
-			return false
-		}
-		bi := big.NewInt(0)
-		bi.SetBytes(in.TxId)
-		if big.NewInt(0).Cmp(bi) == 0 {
-			log.Warn("coinbase txid is not zero")
-			return false
-		}
-		return true
-	}
-
-	// simple transaction
-	blc.Traverse(func(block *Block) {
-
-	})
-
-	return true
-}
+//// VerifyTransaction 验证交易合法性
+//func (chain *BlockChain) VerifyTransaction(target *Transaction) {
+//	chain.Traverse(func(block *Block) {
+//		//for _, tx := range block.Transactions {
+//		//
+//		//}
+//	})
+//}
+//
+//func (chain *BlockChain) VerifyTxInput(in *TxInput) bool {
+//	if in.IsCoinbase() {
+//		if in.ScriptSig != nil {
+//			log.Warn("coinbase script sig is not nil")
+//			return false
+//		}
+//		bi := big.NewInt(0)
+//		bi.SetBytes(in.TxId)
+//		if big.NewInt(0).Cmp(bi) == 0 {
+//			log.Warn("coinbase txid is not zero")
+//			return false
+//		}
+//		return true
+//	}
+//
+//	// simple transaction
+//	chain.Traverse(func(block *Block) {
+//
+//	})
+//
+//	return true
+//}

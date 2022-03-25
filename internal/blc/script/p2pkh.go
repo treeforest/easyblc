@@ -7,18 +7,19 @@ import (
 	"fmt"
 	"github.com/treeforest/easyblc/pkg/base58check"
 	"github.com/treeforest/easyblc/pkg/gob"
+	log "github.com/treeforest/logger"
 )
 
-func ParsePubKeyHashFromScriptSig(scriptSig []byte) []byte {
+func ParsePubKeyHashFromScriptSig(scriptSig []byte) ([]byte, error) {
 	var ops []Op
-	gob.Decode(scriptSig, ops)
-	return ops[0].Data
+	err := gob.Decode(scriptSig, &ops)
+	return ops[0].Data, err
 }
 
-func ParsePubKeyHashFromScriptPubKey(scriptPubKey []byte) []byte {
+func ParsePubKeyHashFromScriptPubKey(scriptPubKey []byte) ([]byte, error) {
 	var ops []Op
-	gob.Decode(scriptPubKey, ops)
-	return ops[2].Data
+	err := gob.Decode(scriptPubKey, &ops)
+	return ops[2].Data, err
 }
 
 // GenerateScriptPubKey 生成交易输出脚本
@@ -40,25 +41,30 @@ func GenerateScriptPubKey(address []byte) ([]byte, error) {
 // IsValidScriptPubKey 是否是有效的交易输入脚本
 func IsValidScriptPubKey(scriptPubKey []byte) bool {
 	var ops []Op
-	err := gob.Decode(scriptPubKey, ops)
+	err := gob.Decode(scriptPubKey, &ops)
 	if err != nil {
+		log.Debug("decode script pub key error:", err)
 		return false
 	}
-	if len(ops) != 2 {
+	if len(ops) != 5 {
+		log.Debug("script pub key sum error")
 		return false
 	}
 	codes := []OPCODE{CHECKSIG, EQUALVERIFY, PUSH, HASH160, DUP}
 	requireNull := []bool{true, true, false, true, true}
 	for i, op := range ops {
 		if op.Code != codes[i] {
+			log.Debugf("opcode error, require:%d actually:%d", op.Code, codes[i])
 			return false
 		}
 		if requireNull[i] {
 			if op.Data != nil {
+				log.Debugf("%d data should be null", i)
 				return false
 			}
 		} else {
 			if op.Data == nil || len(op.Data) == 0 {
+				log.Debugf("%d data should be not null", i)
 				return false
 			}
 		}
@@ -87,15 +93,18 @@ func GenerateScriptSig(txHash []byte, key *ecdsa.PrivateKey) ([]byte, error) {
 // IsValidScriptSig 是否是有效的交易输入脚本
 func IsValidScriptSig(scriptSig []byte) bool {
 	var ops []Op
-	err := gob.Decode(scriptSig, ops)
+	err := gob.Decode(scriptSig, &ops)
 	if err != nil {
+		log.Debug("decode scriptsig failed:", err)
 		return false
 	}
 	if len(ops) != 2 {
+		log.Debug("opcode sum error")
 		return false
 	}
 	for _, op := range ops {
 		if op.Code != PUSH || op.Data == nil || len(op.Data) == 0 {
+			log.Debug("opcode format error")
 			return false
 		}
 	}
