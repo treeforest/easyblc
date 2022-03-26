@@ -59,7 +59,7 @@ func (b *Block) Mining() bool {
 	}
 	b.Hash = hash
 	b.Nonce = nonce
-	log.Debug("碰撞次数：", nonce)
+	log.Debug("nonce：", nonce)
 	return true
 }
 

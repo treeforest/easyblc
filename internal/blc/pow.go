@@ -1,11 +1,14 @@
 package blc
 
 import (
+	"context"
 	"crypto/sha256"
 	log "github.com/treeforest/logger"
 	"math"
 	"math/big"
+	"runtime"
 	"strconv"
+	"sync"
 	"time"
 )
 
@@ -24,30 +27,85 @@ func NewProofOfWork(block *Block) *ProofOfWork {
 
 // Mining 挖矿
 func (pow *ProofOfWork) Mining() ([]byte, uint64, bool) {
-	var (
-		data    []byte
-		nonce   uint64   = 0 // 碰撞次数
-		hash    [32]byte     // 计算出的区块哈希值
-		hashInt big.Int      // 哈希对应的大整数
-	)
 	// 组装挖矿结构 |preHash|height|timestamp|merkelRoot|targetBit|nonce|
-	data = pow.block.MarshalHeaderWithoutNonceAndHash()
+	data := pow.block.MarshalHeaderWithoutNonceAndHash()
+	wg := sync.WaitGroup{}
+	ctx, cancel := context.WithCancel(context.Background())
+	nonceCh := make(chan uint64, 1)
+	done := make(chan struct{}, 2)
 	now := time.Now()
+
+	// 开n个协程同时挖矿
+	n := runtime.NumCPU()
+	wg.Add(n)
+	for i := uint64(0); i < uint64(n); i++ {
+		begin := math.MaxUint64 / uint64(n) * i
+		end := math.MaxUint64 / uint64(n) * (i + 1)
+		go pow.mining(ctx, &wg, begin, end, data, nonceCh)
+	}
+	go func() {
+		wg.Wait()
+		done <- struct{}{}
+	}()
+
 	for {
-		hash = sha256.Sum256(append(data, []byte(strconv.FormatUint(nonce, 10))...))
-		hashInt.SetBytes(hash[:])
-		if pow.target.Cmp(&hashInt) == 1 {
-			break // 挖到区块
-		}
-		nonce++
-		if nonce == math.MaxUint64 {
-			// 当前组合的最大值都没能挖出区块， 需要进一步修改coinbase data
+		select {
+		case nonce := <-nonceCh:
+			sub := time.Now().Sub(now)
+			log.Debugf("挖矿用时: %fs(%dms)", sub.Seconds(), sub.Milliseconds())
+
+			cancel() // 退出协程
+			hash := sha256.Sum256(append(data, []byte(strconv.FormatUint(nonce, 10))...))
+			return hash[:], nonce, true
+		case <-done:
+			// 需要进一步修改coinbase data，然后再次挖矿
+			cancel()
 			return nil, 0, false
 		}
 	}
-	used := time.Now().Sub(now).Milliseconds()
-	log.Debugf("mining used: %dms", used)
-	return hash[:], nonce, true
+
+	//now := time.Now()
+	//for {
+	//	hash = sha256.Sum256(append(data, []byte(strconv.FormatUint(nonce, 10))...))
+	//	hashInt.SetBytes(hash[:])
+	//	if pow.target.Cmp(&hashInt) == 1 {
+	//		break // 挖到区块
+	//	}
+	//	nonce++
+	//	if nonce == math.MaxUint64 {
+	//		// 当前组合的最大值都没能挖出区块， 需要进一步修改coinbase data
+	//		return nil, 0, false
+	//	}
+	//}
+	//used := time.Now().Sub(now).Milliseconds()
+	//log.Debugf("mining used: %dms", used)
+	//return hash[:], nonce, true
+}
+
+func (pow *ProofOfWork) mining(ctx context.Context, wg *sync.WaitGroup, begin, end uint64, data []byte, nonceChan chan uint64) {
+	defer wg.Done()
+
+	var hash [32]byte   // 计算出的区块哈希值
+	var hashInt big.Int // 哈希对应的大整数
+	nonce := begin
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+			hash = sha256.Sum256(append(data, []byte(strconv.FormatUint(nonce, 10))...))
+			hashInt.SetBytes(hash[:])
+			if pow.target.Cmp(&hashInt) == 1 {
+				nonceChan <- nonce // 挖到区块
+				return
+			}
+			nonce++
+			if nonce == end {
+				// 当前组合的最大值都没能挖出区块
+				return
+			}
+		}
+	}
 }
 
 const (
