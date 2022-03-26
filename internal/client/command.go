@@ -24,7 +24,7 @@ func (c *Command) printUsage() {
 	fmt.Printf("\tcreateblockchain -address ADDRESS -- 创建区块链\n")
 	fmt.Printf("\t\t-address -- 接收创世区块奖励的地址\n")
 	// 打印区块信息
-	fmt.Printf("\tprinfchain -- 输出区块链信息\n")
+	fmt.Printf("\tprintchain -- 输出区块链信息\n")
 	// 转账
 	fmt.Printf("\tsend -from FROM -to TO -amount AMOUNT -- 发起转账\n")
 	fmt.Printf("\t\t-from FROM -- 转账源地址\n")

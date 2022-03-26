@@ -2,9 +2,11 @@ package blc
 
 import (
 	"crypto/sha256"
+	log "github.com/treeforest/logger"
 	"math"
 	"math/big"
 	"strconv"
+	"time"
 )
 
 type ProofOfWork struct {
@@ -13,9 +15,10 @@ type ProofOfWork struct {
 }
 
 func NewProofOfWork(block *Block) *ProofOfWork {
-	target := big.NewInt(1)
-	// 左移256-Bits, 计算出的哈希满足小于target即挖矿成功
-	target = target.Lsh(target, 256-block.Bits)
+	//target := big.NewInt(1)
+	//// 左移256-Bits, 计算出的哈希满足小于target即挖矿成功
+	//target = target.Lsh(target, 256-block.Bits)
+	target := UnCompact(block.Bits)
 	return &ProofOfWork{block: block, target: target}
 }
 
@@ -29,6 +32,7 @@ func (pow *ProofOfWork) Mining() ([]byte, uint64, bool) {
 	)
 	// 组装挖矿结构 |preHash|height|timestamp|merkelRoot|targetBit|nonce|
 	data = pow.block.MarshalHeaderWithoutNonceAndHash()
+	now := time.Now()
 	for {
 		hash = sha256.Sum256(append(data, []byte(strconv.FormatUint(nonce, 10))...))
 		hashInt.SetBytes(hash[:])
@@ -41,15 +45,97 @@ func (pow *ProofOfWork) Mining() ([]byte, uint64, bool) {
 			return nil, 0, false
 		}
 	}
+	used := time.Now().Sub(now).Milliseconds()
+	log.Debugf("mining used: %dms", used)
 	return hash[:], nonce, true
 }
 
+const (
+	// DifficultyAdjustmentInterval 难度值调整区块间隔
+	DifficultyAdjustmentInterval = uint64(2016)
+	// PowTargetTimespan 预定出2100个块规定的时间（每个出块时间为30s）
+	PowTargetTimespan = 60 * 10 * 2016
+)
+
+var (
+	// PowLimit 最低难度值
+	PowLimit = big.NewInt(0)
+)
+
 // GetNextWorkRequired 计算难度目标值，规定30秒出一个块
-func (pow *ProofOfWork) GetNextWorkRequired() {
-	// TODO
+func (chain *BlockChain) GetNextWorkRequired() uint32 {
+	lastBlock := chain.GetLatestBlock()
+	if (lastBlock.Height+1)%DifficultyAdjustmentInterval != 0 {
+		// 不需要难度调整，使用上一个区块的难度值
+		return lastBlock.Bits
+	}
+	// 找到最近2016个区块的首个区块
+	heightFirst := lastBlock.Height - (DifficultyAdjustmentInterval - 1)
+	firstBlock, _ := chain.GetAncestor(heightFirst)
+	// 重新计算难度值
+	return chain.CalculateNextWorkRequired(lastBlock, firstBlock)
 }
 
-// CalculateNextWorkRequired 计算下个区块的目标值
-func (pow *ProofOfWork) CalculateNextWorkRequired() {
-	// TODO
+// CalculateNextWorkRequired 计算难度值
+func (chain *BlockChain) CalculateNextWorkRequired(latest *Block, first *Block) uint32 {
+	// 如果最近2016个区块生成时间小于1/4，就按照1/4来计算，大于4倍，就按照4倍来计算，以防止出现难度偏差过大的现象
+	actualTimespan := latest.GetBlockTime() - first.GetBlockTime()
+	if actualTimespan < PowTargetTimespan/4 {
+		actualTimespan = PowTargetTimespan / 4
+	}
+	if actualTimespan > PowTargetTimespan*4 {
+		actualTimespan = PowTargetTimespan * 4
+	}
+
+	// 调整难度值
+	newTarget := UnCompact(latest.Bits)
+	newTarget.Mul(newTarget, big.NewInt(actualTimespan))
+	newTarget.Div(newTarget, big.NewInt(PowTargetTimespan))
+
+	// target 越大，挖矿难度越低。这里要求最低难度不能大于 PowLimit
+	if newTarget.Cmp(PowLimit) == 1 {
+		newTarget = PowLimit
+	}
+
+	return Compact(newTarget)
+}
+
+// UnCompact 对目标值进行解压缩，返回对应的难度值
+func UnCompact(bits uint32) *big.Int {
+	high := bits & 0xFF000000 >> 24 // 指数
+	low := bits & 0x00FFFFFF        // 系数
+	x := big.NewInt(int64(low))
+	y := big.NewInt(0).Lsh(big.NewInt(1), uint(8*(high-3)))
+	target := big.NewInt(0).Mul(x, y)
+	return target
+}
+
+// Compact 对难度值进行压缩，返回对应的目标值
+func Compact(target *big.Int) uint32 {
+	bs := target.Bytes()
+	exponent := uint(0) // 指数
+	for i := len(bs) - 1; i > 0; i-- {
+		if bs[i] == 0x00 {
+			exponent += 8
+			continue
+		}
+		v := bs[i]
+		for {
+			// 最低位是否为0，即 0^1=0
+			if v^0x1 == 0 {
+				exponent++
+				v = v >> 1
+				continue
+			}
+			break
+		}
+		break
+	}
+
+	y := big.NewInt(0).Lsh(big.NewInt(1), exponent)
+	x := target.Div(target, y)
+	high := uint32((exponent/8 + 3) << 24 & 0xFF000000) // 高位
+	low := uint32(x.Int64() & 0x00FFFFFF)
+	bits := high | low
+	return bits
 }

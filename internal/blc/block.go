@@ -18,7 +18,7 @@ type Block struct {
 	MerkelRoot []byte // 默克尔树根哈希
 	Height     uint64 // 区块号,区块高度
 	Time       int64  // 区块产生时的时间戳
-	Bits       uint   // 当前工作量证明的复杂度
+	Bits       uint32 // 当前工作量证明的复杂度
 	Nonce      uint64 // 挖矿找到的满足条件的值
 	// body
 	Transactions []*Transaction // 交易信息
@@ -26,10 +26,10 @@ type Block struct {
 }
 
 func CreateGenesisBlock(txs []*Transaction) (*Block, bool) {
-	return NewBlock(0, nil, txs)
+	return NewBlock(0x1D00FFFF, 0, nil, txs)
 }
 
-func NewBlock(height uint64, preHash []byte, txs []*Transaction) (*Block, bool) {
+func NewBlock(bits uint32, height uint64, preHash []byte, txs []*Transaction) (*Block, bool) {
 	// TODO: 检查交易的输入输出是否合法
 	block := &Block{
 		Version:      1,
@@ -37,7 +37,7 @@ func NewBlock(height uint64, preHash []byte, txs []*Transaction) (*Block, bool) 
 		Hash:         nil,
 		Height:       height,
 		Time:         time.Now().UnixNano(),
-		Bits:         24,
+		Bits:         bits,
 		Nonce:        0,
 		Transactions: txs,
 		MerkleTree:   nil,
@@ -52,6 +52,7 @@ func NewBlock(height uint64, preHash []byte, txs []*Transaction) (*Block, bool) 
 
 func (b *Block) Mining() bool {
 	miner := NewProofOfWork(b)
+	log.Debug("begin mining...")
 	hash, nonce, succ := miner.Mining() // 挖矿
 	if !succ {
 		return false
@@ -97,4 +98,8 @@ func (b *Block) BuildMerkleTree() {
 	merkleRoot := tree.BuildWithHashes(txHashes)
 	b.MerkleTree = tree
 	b.MerkelRoot = merkleRoot
+}
+
+func (b *Block) GetBlockTime() int64 {
+	return b.Time
 }

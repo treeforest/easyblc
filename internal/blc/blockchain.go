@@ -105,6 +105,29 @@ func (chain *BlockChain) Close() {
 	}
 }
 
+// GetAncestor 获取指定高度的祖先区块
+func (chain *BlockChain) GetAncestor(height uint64) (*Block, error) {
+	if height < 0 || chain.GetLatestBlock().Height < height {
+		return nil, errors.New("invalid height")
+	}
+	var block *Block
+	err := chain.Traverse(func(b *Block) {
+		if b.Height == height {
+			block = b
+			return
+		}
+	})
+	if err != nil {
+		return nil, fmt.Errorf("traverse blockchain error:%v", err)
+	}
+	return block, nil
+}
+
+// GetLatestBlock 获取最新区块
+func (chain *BlockChain) GetLatestBlock() *Block {
+	return chain.latestBlock
+}
+
 // GetBlockIterator 返回区块迭代器
 func (chain *BlockChain) GetBlockIterator() *BlockIterator {
 	return NewBlockIterator(chain.dao)
@@ -235,7 +258,8 @@ func (chain *BlockChain) MineBlock(address string) error {
 		if err != nil {
 			log.Fatal("create coinbase transaction failed:", err)
 		}
-		block, succ = NewBlock(chain.latestBlock.Height+1, chain.latestBlock.Hash,
+		requiredBits := chain.GetNextWorkRequired()
+		block, succ = NewBlock(requiredBits, chain.latestBlock.Height+1, chain.latestBlock.Hash,
 			append([]*Transaction{coinbaseTx}, txs...))
 		if succ {
 			break
