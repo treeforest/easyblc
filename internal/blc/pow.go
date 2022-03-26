@@ -111,7 +111,7 @@ func (pow *ProofOfWork) mining(ctx context.Context, wg *sync.WaitGroup, begin, e
 const (
 	// DifficultyAdjustmentInterval 难度值调整区块间隔
 	DifficultyAdjustmentInterval = uint64(2016)
-	// PowTargetTimespan 预定出2100个块规定的时间（每个出块时间为30s）
+	// PowTargetTimespan 预定出2100个块规定的时间（每个出块时间大约为10分钟）
 	PowTargetTimespan = 60 * 10 * 2016
 )
 
