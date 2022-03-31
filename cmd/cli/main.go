@@ -5,6 +5,6 @@ import (
 )
 
 func main() {
-	cmd := client.New()
+	cmd := client.New("../leveldb/")
 	cmd.Run()
 }

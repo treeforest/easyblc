@@ -73,9 +73,9 @@ func IsValidScriptPubKey(scriptPubKey []byte) bool {
 }
 
 // GenerateScriptSig 生成交易输入脚本
-func GenerateScriptSig(txHash []byte, key *ecdsa.PrivateKey) ([]byte, error) {
+func GenerateScriptSig(txHash [32]byte, key *ecdsa.PrivateKey) ([]byte, error) {
 	// 对交易哈希的签名
-	sig, err := ecdsa.SignASN1(rand.Reader, key, txHash)
+	sig, err := ecdsa.SignASN1(rand.Reader, key, txHash[:])
 	if err != nil {
 		return nil, fmt.Errorf("sign failed: %v", err)
 	}
@@ -112,11 +112,11 @@ func IsValidScriptSig(scriptSig []byte) bool {
 }
 
 // Verify 验证输入脚本是否可消费输出脚本的金额
-func Verify(txHash, input, output []byte) bool {
+func Verify(txHash [32]byte, input, output []byte) bool {
 	var in, out []Op
-	gob.Decode(input, &in)
-	gob.Decode(output, &out)
-	e := Engine{Ops: make([]Op, 0), TxHash: txHash}
+	_ = gob.Decode(input, &in)
+	_ = gob.Decode(output, &out)
+	e := Engine{Ops: make([]Op, 0), TxHash: txHash[:]}
 	e.push(out)
 	e.push(in)
 	return e.Run()

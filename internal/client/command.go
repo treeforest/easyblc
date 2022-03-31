@@ -12,10 +12,12 @@ import (
 	"time"
 )
 
-type Command struct{}
+type Command struct {
+	dbPath string
+}
 
-func New() *Command {
-	return &Command{}
+func New(dbPath string) *Command {
+	return &Command{dbPath}
 }
 
 func (c *Command) printUsage() {
@@ -29,7 +31,11 @@ func (c *Command) printUsage() {
 	fmt.Printf("\tsend -from FROM -to TO -amount AMOUNT -- 发起转账\n")
 	fmt.Printf("\t\t-from FROM -- 转账源地址\n")
 	fmt.Printf("\t\t-to TO -- 转账目标地址\n")
-	fmt.Printf("\t\t-AMOUNT amount -- 转账金额\n")
+	fmt.Printf("\t\t-amount AMOUNT -- 转账金额\n")
+	// 挖矿
+	fmt.Printf("\tmining -address ADDRESS -t T -- 开始挖矿\n")
+	fmt.Printf("\t\t-address -- 接收挖矿奖励地址\n")
+	fmt.Printf("\t\t-t -- 挖矿个数\n")
 	// 钱包
 	fmt.Printf("\tcreatewallet -- 创建钱包\n")
 	fmt.Printf("\tremovewallet -- 删除钱包\n")
@@ -37,6 +43,10 @@ func (c *Command) printUsage() {
 	fmt.Printf("\taddresses -- 获取钱包地址列表\n")
 	// 余额
 	fmt.Printf("\tgetbalance -- 获取钱包余额\n")
+	// 交易池
+	fmt.Printf("\ttxpool -- 输出交易池")
+	// 高度
+	fmt.Printf("\theight -- 打印区块链高度")
 }
 
 func (c *Command) Run() {
@@ -50,6 +60,10 @@ func (c *Command) Run() {
 	from := cmdSend.String("from", "", "转账源地址")
 	to := cmdSend.String("to", "", "转账目标地址")
 	amount := cmdSend.Uint("amount", 0, "转账金额")
+	// 挖矿
+	cmdMining := flag.NewFlagSet("mining", flag.ExitOnError)
+	argMiningRewardAddress := cmdMining.String("address", "", "接收挖矿奖励地址")
+	argMiningNum := cmdMining.Int("n", 1, "挖矿个数")
 	// 钱包
 	cmdCreateWallet := flag.NewFlagSet("createwallet", flag.ExitOnError)
 	cmdRemoveWallet := flag.NewFlagSet("removewallet", flag.ExitOnError)
@@ -57,6 +71,10 @@ func (c *Command) Run() {
 	cmdAddresses := flag.NewFlagSet("addresses", flag.ExitOnError)
 	// 余额
 	cmdGetBalance := flag.NewFlagSet("getbalance", flag.ExitOnError)
+	// 交易池
+	cmdTxPool := flag.NewFlagSet("txpool", flag.ExitOnError)
+	// 区块高度
+	cmdHeight := flag.NewFlagSet("height", flag.ExitOnError)
 
 	if len(os.Args) < 2 {
 		c.printUsage()
@@ -79,6 +97,11 @@ func (c *Command) Run() {
 			goto HELP
 		}
 		c.send(*from, *to, uint64(*amount))
+	case "mining":
+		if !c.parseCommand(cmdMining) || *argMiningRewardAddress == "" || *argMiningNum < 1 {
+			goto HELP
+		}
+		c.mining(*argMiningRewardAddress, *argMiningNum)
 	case "createwallet":
 		if !c.parseCommand(cmdCreateWallet) {
 			goto HELP
@@ -99,6 +122,16 @@ func (c *Command) Run() {
 			goto HELP
 		}
 		c.getBalance()
+	case "txpool":
+		if !c.parseCommand(cmdTxPool) {
+			goto HELP
+		}
+		c.printTxPool()
+	case "height":
+		if !c.parseCommand(cmdHeight) {
+			goto HELP
+		}
+		c.printHeight()
 	default:
 		goto HELP
 	}
@@ -107,24 +140,73 @@ HELP:
 	c.printUsage()
 }
 
+func (c *Command) printHeight() {
+	bc := blc.GetBlockChain(c.dbPath)
+	defer bc.Close()
+	log.Infof("当前高度：%d", bc.GetLatestBlock().Height)
+}
+
+func (c *Command) printTxPool() {
+	bc := blc.GetBlockChain(c.dbPath)
+	defer bc.Close()
+
+	fmt.Println("tx pool: ")
+	bc.GetTxPool().Traverse(func(fee uint64, tx *blc.Transaction) {
+		fmt.Printf("\tfee: %d\n", fee)
+		fmt.Printf("\ttxHash: %x\n", tx.Hash)
+		fmt.Printf("\ttime: %d\n", tx.Time)
+		fmt.Printf("\tVins:\n")
+		for _, vin := range tx.Vins {
+			fmt.Printf("\t\ttxid: %x\n", vin.TxId)
+			fmt.Printf("\t\tvout: %d\n", vin.Vout)
+			if vin.IsCoinbase() {
+				fmt.Printf("\t\tcoinbaseDataSize: %d\n", vin.CoinbaseDataSize)
+				fmt.Printf("\t\tcoinbaseData: %s\n", vin.CoinbaseData)
+			} else {
+				fmt.Printf("\t\tscriptSig: %x\n", vin.ScriptSig)
+			}
+		}
+		fmt.Printf("\tVouts:\n")
+		for index, vout := range tx.Vouts {
+			fmt.Printf("\t\tindex: %d\n", index)
+			fmt.Printf("\t\tvalue: %d\n", vout.Value)
+			fmt.Printf("\t\taddress: %s\n", vout.Address)
+			fmt.Printf("\t\tscriptPubKey: %x\n", vout.ScriptPubKey)
+		}
+		fmt.Printf("\n")
+	})
+}
+
 func (c *Command) getBalance() {
-	bc := blc.GetBlockChain()
+	bc := blc.GetBlockChain(c.dbPath)
 	defer bc.Close()
 
 	total := uint64(0)
 	res := ""
 	mgr := walletmgr.New()
 	for _, addr := range mgr.Addresses() {
-		amount, err := bc.GetBalance(addr)
-		if err != nil {
-			log.Fatal("get balance failed:", err)
-		}
+		amount := bc.GetBalance(addr)
 		total += amount
 		res = fmt.Sprintf("%s\n\t地址: %s\t余额: %d", res, addr, amount)
 	}
 	res = fmt.Sprintf("总余额:%d%s", total, res)
 
 	fmt.Println(res)
+}
+
+func (c *Command) mining(address string, n int) {
+	// 检查地址格式
+	if !utils.IsValidAddress(address) {
+		log.Fatal("ADDRESS is not a valid address")
+	}
+	bc := blc.GetBlockChain(c.dbPath)
+	defer bc.Close()
+
+	for i := 0; i < n; i++ {
+		if err := bc.MineBlock(address); err != nil {
+			log.Fatal("mine block failed:", err)
+		}
+	}
 }
 
 func (c *Command) send(from, to string, amount uint64) {
@@ -146,36 +228,33 @@ func (c *Command) send(from, to string, amount uint64) {
 		log.Fatal("not found wallet:", err)
 	}
 
-	bc := blc.GetBlockChain()
+	bc := blc.GetBlockChain(c.dbPath)
 	defer bc.Close()
 
 	// 检查余额
-	balance, err := bc.GetBalance(from)
-	if err != nil {
-		log.Fatal("get balance failed: ", err)
-	}
+	log.Debug("check balance...")
+	balance := bc.GetBalance(from)
 	if balance < amount {
 		log.Fatal("lack of balance")
 	}
 
 	// 交易输入
+	log.Debug("check utxo...")
 	var vins []*blc.TxInput
-	utxoSet, _ := bc.GetUTXOSet(from)
-	for txId, outputs := range utxoSet {
-		for index, _ := range outputs {
-			vin, err := blc.NewTxInput([]byte(txId), uint32(index), &wallet.Key)
-			if err != nil {
-				log.Fatal("create tx vin failed:", err)
-			}
-			vins = append(vins, vin)
+	utxoSet := bc.GetUTXOSet(from)
+	utxoSet.Traverse(func(txHash [32]byte, index int, output *blc.TxOutput) {
+		vin, err := blc.NewTxInput(txHash, uint32(index), &wallet.Key)
+		if err != nil {
+			log.Fatal("create tx vin failed:", err)
 		}
-	}
+		vins = append(vins, vin)
+	})
 
 	// 生成一个找零地址
 	addresses := mgr.Addresses()
 	rand.Seed(time.Now().UnixNano())
 	changeAddress := addresses[rand.Intn(len(addresses))]
-	log.Debug("找零地址：", changeAddress)
+	log.Debug("随机找零地址：", changeAddress)
 
 	// 手续费
 	fee := uint64(0)
@@ -186,6 +265,7 @@ func (c *Command) send(from, to string, amount uint64) {
 	log.Debug("手续费:", fee)
 
 	// 交易输出
+	log.Debug("create transaction output...")
 	var vouts []*blc.TxOutput
 	vout, err := blc.NewTxOutput(amount, to)
 	if err != nil {
@@ -198,20 +278,22 @@ func (c *Command) send(from, to string, amount uint64) {
 	vouts = append(vouts, []*blc.TxOutput{vout, changeVout}...)
 
 	// 构造交易
+	log.Debug("create transaction...")
 	tx, err := blc.NewTransaction(vins, vouts)
 	if err != nil {
 		log.Fatal("create transaction failed:", err)
 	}
 
 	// 将交易放入交易池
+	log.Debug("put transaction to txpool...")
 	if err = bc.AddToTxPool(tx); err != nil {
 		log.Fatal("put tx to pool failed:", err)
 	}
 
 	// 挖矿
-	if err = bc.MineBlock(from); err != nil {
-		log.Fatal("mine block failed:", err)
-	}
+	//if err = bc.MineBlock(from); err != nil {
+	//	log.Fatal("mine block failed:", err)
+	//}
 }
 
 func (c *Command) parseCommand(f *flag.FlagSet) bool {
@@ -252,13 +334,13 @@ func (c *Command) createWallet() {
 }
 
 func (c *Command) createBlockChainWithGenesisBlock(address string) {
-	bc := blc.CreateBlockChainWithGenesisBlock(address)
+	bc := blc.CreateBlockChainWithGenesisBlock(c.dbPath, address)
 	defer bc.Close()
 	log.Info("create block chain success")
 }
 
 func (c *Command) printChain() {
-	bc := blc.GetBlockChain()
+	bc := blc.GetBlockChain(c.dbPath)
 	defer bc.Close()
 
 	fmt.Println("blockchain:")

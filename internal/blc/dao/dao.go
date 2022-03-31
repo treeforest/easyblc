@@ -7,15 +7,18 @@ import (
 	"github.com/syndtr/goleveldb/leveldb/opt"
 	log "github.com/treeforest/logger"
 	"os"
+	"path/filepath"
+	"strconv"
 )
 
 const (
 	dbName             = "BLC"                       // 数据库名
 	latestBlockHashKey = "__latest_block_hash_key__" // 最新区块哈希对应的key
+	heightPrefix       = "__block_height__"
 )
 
-func IsNotExistDB() bool {
-	_, err := os.Stat(dbName)
+func IsNotExistDB(path string) bool {
+	_, err := os.Stat(filepath.Join(path, dbName))
 	return os.IsNotExist(err)
 }
 
@@ -25,8 +28,8 @@ type DAO struct {
 	latestBlockHash []byte // 最新区块哈希值
 }
 
-func New() *DAO {
-	levelDB, err := leveldb.OpenFile(dbName, &opt.Options{})
+func New(dbPath string) *DAO {
+	levelDB, err := leveldb.OpenFile(filepath.Join(dbPath, dbName), nil)
 	if err != nil {
 		log.Fatalf("open leveldb [%s] error [%v]", dbName, err)
 	}
@@ -35,46 +38,74 @@ func New() *DAO {
 }
 
 // Load 加载已有的数据库
-func Load() (d *DAO, err error) {
-	d = New()
-	err = d.loadLatestBlockHash()
+func Load(dbPath string) (o *DAO, err error) {
+	o = New(dbPath)
+	err = o.loadLatestBlockHash()
 	return
 }
 
 // loadLatestBlockHash load the latest block hash
-func (d *DAO) loadLatestBlockHash() error {
+func (o *DAO) loadLatestBlockHash() error {
 	ro := &opt.ReadOptions{DontFillCache: false}
-	value, err := d.DB.Get([]byte(latestBlockHashKey), ro)
+	value, err := o.DB.Get([]byte(latestBlockHashKey), ro)
 	if err != nil {
 		if err == leveldb.ErrNotFound {
 			return errors.New("not found latest block hash")
 		}
 		return fmt.Errorf("load latest block hash failed: %v", err)
 	}
-	d.latestBlockHash = value
+	o.latestBlockHash = value
 	return nil
 }
 
-func (d *DAO) Close() error {
-	return d.DB.Close()
+func (o *DAO) Close() error {
+	return o.DB.Close()
 }
 
-func (d *DAO) GetLatestBlockHash() []byte {
-	return d.latestBlockHash
+func (o *DAO) GetLatestBlockHash() []byte {
+	return o.latestBlockHash
 }
 
-func (d *DAO) GetBlock(hash []byte) ([]byte, error) {
-	return d.DB.Get(hash, nil)
+func (o *DAO) GetBlock(hash []byte) ([]byte, error) {
+	return o.DB.Get(hash, nil)
 }
 
-func (d *DAO) AddBlock(hash []byte, block []byte) error {
+func (o *DAO) AddBlock(height uint64, hash [32]byte, block []byte) error {
+	// 开启事务
+	trans, err := o.DB.OpenTransaction()
+	if err != nil {
+		return fmt.Errorf("open transaction failed: %v", err)
+	}
+	defer func() {
+		if err != nil {
+			// 事务提交失败，销毁事务
+			trans.Discard()
+		}
+	}()
+
 	wo := &opt.WriteOptions{Sync: true}
-	if err := d.DB.Put(hash, block, wo); err != nil {
+
+	err = trans.Put(hash[:], block, wo)
+	if err != nil {
+		return fmt.Errorf("intsert block failed: %v", err)
+	}
+
+	err = trans.Put([]byte(latestBlockHashKey), hash[:], wo)
+	if err != nil {
+		return fmt.Errorf("update latest block hash failed: %v", err)
+	}
+
+	heightKey := heightPrefix + strconv.FormatUint(height, 16)
+	err = trans.Put([]byte(heightKey), hash[:], wo)
+	if err != nil {
+		return fmt.Errorf("intsert block height-hash failed: %v", err)
+	}
+
+	err = trans.Commit()
+	if err != nil {
 		return fmt.Errorf("add block failed: %v", err)
 	}
-	if err := d.DB.Put([]byte(latestBlockHashKey), hash, wo); err != nil {
-		return fmt.Errorf("put latest block hash failed: %v", err)
-	}
-	d.latestBlockHash = hash
+
+	o.latestBlockHash = hash[:]
 	return nil
 }

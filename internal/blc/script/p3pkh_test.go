@@ -16,10 +16,10 @@ func BenchmarkP2PKH(b *testing.B) {
 		scriptPubKey, err := GenerateScriptPubKey(w.GetAddress())
 		require.NoError(b, err)
 
-		scriptSig, err := GenerateScriptSig(txHash[:], &w.Key)
+		scriptSig, err := GenerateScriptSig(txHash, &w.Key)
 		require.NoError(b, err)
 
-		ok := Verify(txHash[:], scriptSig, scriptPubKey)
+		ok := Verify(txHash, scriptSig, scriptPubKey)
 		require.Equal(b, true, ok)
 	}
 }
@@ -35,7 +35,7 @@ func TestIsValidScriptPubKey(t *testing.T) {
 func TestIsValidScriptSig(t *testing.T) {
 	w := wallet.New()
 	txHash := sha256.Sum256([]byte("this is a mock transaction"))
-	scriptSig, err := GenerateScriptSig(txHash[:], &w.Key)
+	scriptSig, err := GenerateScriptSig(txHash, &w.Key)
 	require.NoError(t, err)
 	ok := IsValidScriptSig(scriptSig)
 	require.Equal(t, true, ok)
@@ -44,7 +44,7 @@ func TestIsValidScriptSig(t *testing.T) {
 func TestParsePubKeyHashFromScriptSig(t *testing.T) {
 	w := wallet.New()
 	txHash := sha256.Sum256([]byte("this is a mock transaction"))
-	scriptSig, err := GenerateScriptSig(txHash[:], &w.Key)
+	scriptSig, err := GenerateScriptSig(txHash, &w.Key)
 	require.NoError(t, err)
 	pubKeyHash, err := ParsePubKeyHashFromScriptSig(scriptSig)
 	require.NoError(t, err)

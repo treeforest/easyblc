@@ -1,23 +1,71 @@
 package blc
 
-import (
-	"fmt"
-	log "github.com/treeforest/logger"
-)
-
-type UTXOSet map[string]map[int]*TxOutput // TxId => Index => TxOut
-
-type UTXO struct {
-	TxId  []byte    // UTXO所在交易的交易哈希
-	Index int       // UTXO在所属交易输出中的索引
-	TxOut *TxOutput // 交易输出本身
+type UTXOSet struct {
+	utxoSet map[[32]byte]map[int]*TxOutput // TxHash => Index => TxOut
+	Size    int                            // UTXO 个数
 }
 
-// FindAllUTXOSet 获取所有的utxo
-func (chain *BlockChain) FindAllUTXOSet() (UTXOSet, error) {
-	utxoSet := make(UTXOSet)
-	spent := make(map[string]map[uint32]struct{})
-	log.Debug("[utxo set]")
+func NewUTXOSet() *UTXOSet {
+	return &UTXOSet{utxoSet: map[[32]byte]map[int]*TxOutput{}, Size: 0}
+}
+
+func (s *UTXOSet) Traverse(fn func(txHash [32]byte, index int, output *TxOutput)) {
+	for txHash, outputs := range s.utxoSet {
+		for index, output := range outputs {
+			fn(txHash, index, output)
+		}
+	}
+}
+
+func (s *UTXOSet) Put(txHash [32]byte, index int, output *TxOutput) {
+	if _, ok := s.utxoSet[txHash]; !ok {
+		s.utxoSet[txHash] = make(map[int]*TxOutput)
+	}
+	s.utxoSet[txHash][index] = output
+	s.Size++
+}
+
+func (s *UTXOSet) Remove(txHash [32]byte, index int) {
+	if !s.Exist(txHash, index) {
+		return
+	}
+	delete(s.utxoSet[txHash], index)
+	if len(s.utxoSet[txHash]) == 0 {
+		delete(s.utxoSet, txHash)
+	}
+	s.Size--
+}
+
+func (s *UTXOSet) Get(txHash [32]byte, index int) *TxOutput {
+	if !s.Exist(txHash, index) {
+		return nil
+	}
+	return s.utxoSet[txHash][index]
+}
+
+func (s *UTXOSet) Has(txHash [32]byte) bool {
+	_, ok := s.utxoSet[txHash]
+	return ok
+}
+
+func (s *UTXOSet) Exist(txHash [32]byte, index int) bool {
+	if _, ok := s.utxoSet[txHash]; !ok {
+		return false
+	}
+	if _, ok := s.utxoSet[txHash][index]; !ok {
+		return false
+	}
+	return true
+}
+
+// updateUTXOSet 更新 utxo 集合
+func (chain *BlockChain) updateUTXOSet() error {
+	if chain.utxoSet == nil {
+		chain.utxoSet = NewUTXOSet()
+	}
+	spent := make(map[[32]byte]map[uint32]struct{})
+
+	// log.Debug("[blockchain utxo set]")
 	err := chain.Traverse(func(block *Block) {
 		for _, tx := range block.Transactions {
 			// 交易输入
@@ -25,86 +73,49 @@ func (chain *BlockChain) FindAllUTXOSet() (UTXOSet, error) {
 				if vin.IsCoinbase() {
 					continue
 				}
-				if _, ok := spent[string(vin.TxId)]; !ok {
-					spent[string(vin.TxId)] = make(map[uint32]struct{})
+				if _, ok := spent[vin.TxId]; !ok {
+					spent[vin.TxId] = make(map[uint32]struct{})
 				}
-				spent[string(vin.TxId)][vin.Vout] = struct{}{}
+				spent[vin.TxId][vin.Vout] = struct{}{}
 			}
 			// 交易输出
 			for i, out := range tx.Vouts {
-				if v, ok := spent[string(tx.Hash)]; ok {
+				if v, ok := spent[tx.Hash]; ok {
 					if _, ok = v[uint32(i)]; ok {
 						// 被花费
-						delete(spent[string(tx.Hash)], uint32(i))
+						delete(spent[tx.Hash], uint32(i))
 						continue
 					}
 				}
-				log.Debugf("txid:%x\tindex:%d\taddress:%s\tvalue:%d", tx.Hash, i, out.Address, out.Value)
-				if _, ok := utxoSet[string(tx.Hash)]; !ok {
-					utxoSet[string(tx.Hash)] = make(map[int]*TxOutput)
-				}
-				utxoSet[string(tx.Hash)][i] = out
+				// log.Debugf("txid:%x\tindex:%d\taddress:%s\tvalue:%d", tx.Hash, i, out.Address, out.Value)
+				chain.utxoSet.Put(tx.Hash, i, out)
 			}
 		}
 	})
 	if err != nil {
-		return nil, err
+		return err
 	}
-	return utxoSet, nil
+	return nil
 }
 
-func (chain *BlockChain) GetBalance(address string) (uint64, error) {
-	utxoSet, err := chain.GetUTXOSet(address)
-	if err != nil {
-		return 0, err
-	}
+func (chain *BlockChain) GetBalance(address string) uint64 {
+	utxoSet := chain.GetUTXOSet(address)
+
 	var amount uint64 = 0
-	for _, outputs := range utxoSet {
-		for _, output := range outputs {
-			amount += output.Value
-		}
-	}
-	return amount, nil
+	utxoSet.Traverse(func(txHash [32]byte, index int, output *TxOutput) {
+		amount += output.Value
+	})
+
+	return amount
 }
 
 // GetUTXOSet 获取UTXO集合
-func (chain *BlockChain) GetUTXOSet(address string) (UTXOSet, error) {
-	utxoSet := make(UTXOSet)
-	err := chain.Traverse(func(block *Block) {
-		for _, tx := range block.Transactions {
-			for i, vout := range tx.Vouts {
-				if address != vout.Address {
-					continue
-				}
-				// find unspent transaction output
-				if _, ok := utxoSet[string(tx.Hash)]; !ok {
-					utxoSet[string(tx.Hash)] = make(map[int]*TxOutput)
-				}
-				utxoSet[string(tx.Hash)][i] = vout
-			}
+func (chain *BlockChain) GetUTXOSet(address string) *UTXOSet {
+	utxoSet := NewUTXOSet()
+	chain.utxoSet.Traverse(func(txHash [32]byte, index int, output *TxOutput) {
+		if output.Address == address {
+			utxoSet.Put(txHash, index, output)
 		}
 	})
-	if err != nil {
-		return nil, fmt.Errorf("traverse block error:%v", err)
-	}
-
-	// remove spent utxo
-	err = chain.Traverse(func(block *Block) {
-		for _, tx := range block.Transactions {
-			for _, vin := range tx.Vins {
-				if _, ok := utxoSet[string(vin.TxId)]; !ok {
-					continue
-				}
-				delete(utxoSet[string(vin.TxId)], int(vin.Vout))
-				if len(utxoSet[string(vin.TxId)]) == 0 {
-					delete(utxoSet, string(vin.TxId))
-				}
-			}
-		}
-	})
-	if err != nil {
-		return nil, fmt.Errorf("traverse block error:%v", err)
-	}
-
-	return utxoSet, nil
+	return utxoSet
 }

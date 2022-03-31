@@ -26,7 +26,7 @@ func NewProofOfWork(block *Block) *ProofOfWork {
 }
 
 // Mining 挖矿
-func (pow *ProofOfWork) Mining() ([]byte, uint64, bool) {
+func (pow *ProofOfWork) Mining() ([32]byte, uint64, bool) {
 	// 组装挖矿结构 |preHash|height|timestamp|merkelRoot|targetBit|nonce|
 	data := pow.block.MarshalHeaderWithoutNonceAndHash()
 	wg := sync.WaitGroup{}
@@ -56,30 +56,13 @@ func (pow *ProofOfWork) Mining() ([]byte, uint64, bool) {
 
 			cancel() // 退出协程
 			hash := sha256.Sum256(append(data, []byte(strconv.FormatUint(nonce, 10))...))
-			return hash[:], nonce, true
+			return hash, nonce, true
 		case <-done:
 			// 需要进一步修改coinbase data，然后再次挖矿
 			cancel()
-			return nil, 0, false
+			return [32]byte{}, 0, false
 		}
 	}
-
-	//now := time.Now()
-	//for {
-	//	hash = sha256.Sum256(append(data, []byte(strconv.FormatUint(nonce, 10))...))
-	//	hashInt.SetBytes(hash[:])
-	//	if pow.target.Cmp(&hashInt) == 1 {
-	//		break // 挖到区块
-	//	}
-	//	nonce++
-	//	if nonce == math.MaxUint64 {
-	//		// 当前组合的最大值都没能挖出区块， 需要进一步修改coinbase data
-	//		return nil, 0, false
-	//	}
-	//}
-	//used := time.Now().Sub(now).Milliseconds()
-	//log.Debugf("mining used: %dms", used)
-	//return hash[:], nonce, true
 }
 
 func (pow *ProofOfWork) mining(ctx context.Context, wg *sync.WaitGroup, begin, end uint64, data []byte, nonceChan chan uint64) {
@@ -111,16 +94,16 @@ func (pow *ProofOfWork) mining(ctx context.Context, wg *sync.WaitGroup, begin, e
 const (
 	// DifficultyAdjustmentInterval 难度值调整区块间隔
 	DifficultyAdjustmentInterval = uint64(2016)
-	// PowTargetTimespan 预定出2100个块规定的时间（每个出块时间大约为10分钟）
-	PowTargetTimespan = 60 * 10 * 2016
+	// PowTargetTimespan 预定出2100个块规定的时间（每个出块时间大约为10秒钟）
+	PowTargetTimespan = 10 * 2016
 )
 
 var (
 	// PowLimit 最低难度值
-	PowLimit = big.NewInt(0)
+	PowLimit = UnCompact(uint32(0x1e00ffff))
 )
 
-// GetNextWorkRequired 计算难度目标值，规定30秒出一个块
+// GetNextWorkRequired 计算难度目标值，规定10分钟出一个块
 func (chain *BlockChain) GetNextWorkRequired() uint32 {
 	lastBlock := chain.GetLatestBlock()
 	if (lastBlock.Height+1)%DifficultyAdjustmentInterval != 0 {

@@ -1,6 +1,7 @@
 package blc
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"fmt"
 	"time"
@@ -9,7 +10,7 @@ import (
 )
 
 type Transaction struct {
-	Hash  []byte      // 交易哈希
+	Hash  [32]byte    // 交易哈希
 	Vins  []*TxInput  // 输入列表
 	Vouts []*TxOutput // 输出列表
 	Time  int64       // 交易时间戳
@@ -23,7 +24,7 @@ func NewCoinbaseTransaction(reward uint64, address string, coinbaseData []byte) 
 		return nil, fmt.Errorf("create coinbase transaction output error:%v", err)
 	}
 	coinbase := &Transaction{
-		Hash:  nil,
+		Hash:  [32]byte{},
 		Vins:  []*TxInput{input},
 		Vouts: []*TxOutput{output},
 		Time:  time.Now().UnixNano(),
@@ -38,7 +39,7 @@ func NewCoinbaseTransaction(reward uint64, address string, coinbaseData []byte) 
 // NewTransaction 普通转账交易
 func NewTransaction(vins []*TxInput, vouts []*TxOutput) (*Transaction, error) {
 	tx := &Transaction{
-		Hash:  nil,
+		Hash:  [32]byte{},
 		Vins:  vins,
 		Vouts: vouts,
 		Time:  time.Now().UnixNano(),
@@ -60,45 +61,27 @@ func (tx *Transaction) HashTransaction() error {
 }
 
 // CalculateHash 计算区块哈希
-func (tx *Transaction) CalculateHash() ([]byte, error) {
+func (tx *Transaction) CalculateHash() ([32]byte, error) {
 	tmp := *tx
-	tmp.Hash = nil
+	tmp.Hash = [32]byte{}
 	data, err := gob.Encode(&tmp)
 	if err != nil {
-		return nil, err
+		return [32]byte{}, err
 	}
 	hash := sha256.Sum256(data)
-	return hash[:], nil
+	return hash, nil
 }
 
-//// VerifyTransaction 验证交易合法性
-//func (chain *BlockChain) VerifyTransaction(target *Transaction) {
-//	chain.Traverse(func(block *Block) {
-//		//for _, tx := range block.Transactions {
-//		//
-//		//}
-//	})
-//}
-//
-//func (chain *BlockChain) VerifyTxInput(in *TxInput) bool {
-//	if in.IsCoinbase() {
-//		if in.ScriptSig != nil {
-//			log.Warn("coinbase script sig is not nil")
-//			return false
-//		}
-//		bi := big.NewInt(0)
-//		bi.SetBytes(in.TxId)
-//		if big.NewInt(0).Cmp(bi) == 0 {
-//			log.Warn("coinbase txid is not zero")
-//			return false
-//		}
-//		return true
-//	}
-//
-//	// simple transaction
-//	chain.Traverse(func(block *Block) {
-//
-//	})
-//
-//	return true
-//}
+func (tx *Transaction) Marshal() ([]byte, error) {
+	return gob.Encode(tx)
+}
+
+func (tx *Transaction) Unmarshal(data []byte) error {
+	return gob.Decode(data, tx)
+}
+
+type TransactionSlice []*Transaction
+
+func (x TransactionSlice) Len() int           { return len(x) }
+func (x TransactionSlice) Less(i, j int) bool { return bytes.Compare(x[i].Hash[:], x[j].Hash[:]) == -1 }
+func (x TransactionSlice) Swap(i, j int)      { x[i], x[j] = x[j], x[i] }

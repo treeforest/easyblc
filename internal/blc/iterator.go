@@ -38,6 +38,6 @@ func (it *BlockIterator) Next() (*Block, error) {
 		return nil, fmt.Errorf("block unmarshal failed:%v", err)
 	}
 
-	it.cur = block.PreHash
+	it.cur = block.PreHash[:]
 	return &block, nil
 }

@@ -1,9 +1,9 @@
 package blc
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
+	"github.com/bits-and-blooms/bloom/v3"
 	"github.com/treeforest/easyblc/internal/blc/dao"
 	"github.com/treeforest/easyblc/internal/blc/script"
 	"github.com/treeforest/easyblc/pkg/utils"
@@ -16,27 +16,27 @@ const (
 )
 
 type BlockChain struct {
-	dao         *dao.DAO // data access object
-	utxoSet     UTXOSet  // utxo set
-	txPool      *TxPool  // transaction pool
-	latestBlock *Block   // 最新区块
+	dao             *dao.DAO           // data access object
+	utxoSet         *UTXOSet           // utxo set
+	txPool          *TxPool            // transaction pool
+	latestBlock     *Block             // 最新区块
+	addrBloomFilter *bloom.BloomFilter // 钱包地址的 Bloom 过滤器
 }
 
-func GetBlockChain() *BlockChain {
-	if dao.IsNotExistDB() {
+func GetBlockChain(dbPath string) *BlockChain {
+	if dao.IsNotExistDB(dbPath) {
 		log.Fatal("block database not exist")
 	}
-	d, err := dao.Load()
+	d, err := dao.Load(dbPath)
 	if err != nil {
 		log.Fatal("load block database failed: ", err)
 	}
 	blc := &BlockChain{dao: d, txPool: NewTxPool()}
 
-	utxoSet, err := blc.FindAllUTXOSet()
+	err = blc.updateUTXOSet()
 	if err != nil {
 		log.Fatal("find utxo set failed:", err)
 	}
-	blc.utxoSet = utxoSet
 
 	data, err := blc.dao.GetBlock(blc.dao.GetLatestBlockHash())
 	if err != nil {
@@ -52,8 +52,8 @@ func GetBlockChain() *BlockChain {
 	return blc
 }
 
-func CreateBlockChainWithGenesisBlock(address string) *BlockChain {
-	if !dao.IsNotExistDB() {
+func CreateBlockChainWithGenesisBlock(dbPath, address string) *BlockChain {
+	if !dao.IsNotExistDB(dbPath) {
 		log.Fatal("block database already exist")
 	}
 
@@ -61,9 +61,10 @@ func CreateBlockChainWithGenesisBlock(address string) *BlockChain {
 		log.Fatalf("invalid address: %s", address)
 	}
 
+	d := dao.New(dbPath)
 	blc := &BlockChain{
-		dao:         dao.New(),
-		utxoSet:     UTXOSet{},
+		dao:         d,
+		utxoSet:     NewUTXOSet(),
 		txPool:      NewTxPool(),
 		latestBlock: nil,
 	}
@@ -92,14 +93,30 @@ func (chain *BlockChain) AddBlock(block *Block) error {
 	if err != nil {
 		return fmt.Errorf("block marshal failed:%v", err)
 	}
-	err = chain.dao.AddBlock(block.Hash, blockBytes)
+	err = chain.dao.AddBlock(block.Height, block.Hash, blockBytes)
 	if err != nil {
 		return fmt.Errorf("add block to db failed:%v", err)
 	}
+
+	chain.latestBlock = block
+
+	// 更新交易池/UTXO
+	for _, tx := range block.Transactions {
+		chain.txPool.Remove(tx.Hash) // 从交易池中移除交易
+
+		for _, vin := range tx.Vins {
+			// 移除UTXO
+			chain.utxoSet.Remove(vin.TxId, int(vin.Vout))
+		}
+	}
+
 	return nil
 }
 
 func (chain *BlockChain) Close() {
+	if err := chain.txPool.Close(); err != nil {
+		log.Fatal("close tx pool failed: ", err)
+	}
 	if err := chain.dao.Close(); err != nil {
 		log.Fatal("close database failed: ", err)
 	}
@@ -159,7 +176,7 @@ func (chain *BlockChain) IsValidTx(tx *Transaction) (uint64, bool) {
 		log.Debug("calculate tx hash failed:", err)
 		return 0, false
 	}
-	if !bytes.Equal(tx.Hash, hash) {
+	if tx.Hash != hash {
 		log.Debug("transaction hash error")
 		return 0, false
 	}
@@ -169,19 +186,13 @@ func (chain *BlockChain) IsValidTx(tx *Transaction) (uint64, bool) {
 		if vin.IsCoinbase() {
 			continue
 		}
-		outputs, ok := chain.utxoSet[string(vin.TxId)]
-		if !ok {
-			log.Debugf("not found utxo => txid[%x]", vin.TxId)
-			return 0, false
-		}
-		output, ok := outputs[int(vin.Vout)]
-		if !ok {
-			// 交易id没有对应的utxo
-			log.Debug("not found txoutput")
+		output := chain.utxoSet.Get(vin.TxId, int(vin.Vout))
+		if output == nil {
+			log.Debug("invalid transaction input")
 			return 0, false
 		}
 		// 是否为有效地输入脚本
-		ok = script.IsValidScriptSig(vin.ScriptSig)
+		ok := script.IsValidScriptSig(vin.ScriptSig)
 		if !ok {
 			log.Debug("invalid scriptsig")
 			return 0, false
@@ -221,8 +232,26 @@ func (chain *BlockChain) IsValidTx(tx *Transaction) (uint64, bool) {
 	return fee, true
 }
 
+func (chain *BlockChain) GetBlock(height uint64) (*Block, error) {
+	if height < 0 || height > chain.latestBlock.Height {
+		return nil, errors.New("invalid height")
+	}
+	var block *Block
+	err := chain.Traverse(func(b *Block) {
+		if b.Height == height {
+			block = b
+			return
+		}
+	})
+	if err != nil {
+		return nil, fmt.Errorf("blockchian traverse error:%v", err)
+	}
+	return block, nil
+}
+
+// GetBlockSubsidy 获取区块奖励
 func (chain *BlockChain) GetBlockSubsidy(height uint64) uint64 {
-	var halvings uint64 = height / 210000
+	var halvings = height / 210000
 	if halvings > 64 {
 		return 0
 	}
@@ -237,16 +266,9 @@ func (chain *BlockChain) MineBlock(address string) error {
 		return errors.New("latest block is nil")
 	}
 
-	var reward, minerFee uint64 = 0, 0
-	txs := make([]*Transaction, 0)
-
-	// 从交易池中取出交易,并计算奖励：挖矿奖励+矿工费
-	entries := chain.GetTxsFromTxPool(16)
-	for _, entry := range entries {
-		minerFee += entry.Fee
-		txs = append(txs, entry.Tx)
-	}
-	reward = chain.GetBlockSubsidy(chain.latestBlock.Height + 1)
+	// 从交易池中取出交易, 并计算奖励：挖矿奖励+矿工费
+	txs, minerFee := chain.ConsumeTxsFromTxPool(16)
+	reward := chain.GetBlockSubsidy(chain.latestBlock.Height + 1)
 
 	var (
 		block *Block
@@ -261,9 +283,11 @@ func (chain *BlockChain) MineBlock(address string) error {
 		requiredBits := chain.GetNextWorkRequired()
 		block, succ = NewBlock(requiredBits, chain.latestBlock.Height+1, chain.latestBlock.Hash,
 			append([]*Transaction{coinbaseTx}, txs...))
-		if succ {
-			break
+		if !succ {
+			// 重新构建coinbase交易，继续挖矿
+			continue
 		}
+		break
 	}
 
 	err := chain.AddBlock(block)
@@ -272,4 +296,8 @@ func (chain *BlockChain) MineBlock(address string) error {
 	}
 
 	return nil
+}
+
+func (chain *BlockChain) GetTxPool() *TxPool {
+	return chain.txPool
 }
