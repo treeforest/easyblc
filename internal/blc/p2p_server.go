@@ -11,7 +11,7 @@ import (
 	log "github.com/treeforest/logger"
 	"math/rand"
 	"os"
-	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -131,12 +131,12 @@ func (b *Broadcast) Finished() {
 
 // P2PServer 点对点服务
 type P2PServer struct {
-	memberlist    *memberlist.Memberlist
-	broadcasts    *memberlist.TransmitLimitedQueue // 广播队列
-	qu            [][]byte
-	chain         *BlockChain                             // 区块链对象
-	local         *State                                  // 本地状态
-	localLocker   sync.RWMutex                            // 本地状态读写锁
+	memberlist *memberlist.Memberlist
+	broadcasts *memberlist.TransmitLimitedQueue // 广播队列
+	qu         [][]byte
+	chain      *BlockChain // 区块链对象
+	local      *State      // 本地状态
+	//localLocker   sync.RWMutex                            // 本地状态读写锁
 	remote        *State                                  // 远端状态
 	nodes         map[memberlist.Address]*memberlist.Node // 网络中的节点 地址->节点信息
 	metadata      map[string]string                       // 节点元数据
@@ -154,10 +154,10 @@ func NewP2PServer() *P2PServer {
 	}
 
 	server := &P2PServer{
-		qu:            make([][]byte, 0),
-		chain:         GetBlockChain(conf.DBPath),
-		local:         NewState(),
-		localLocker:   sync.RWMutex{},
+		qu:    make([][]byte, 0),
+		chain: GetBlockChain(conf.DBPath),
+		local: NewState(),
+		//localLocker:   sync.RWMutex{},
 		remote:        NewState(),
 		nodes:         map[memberlist.Address]*memberlist.Node{},
 		metadata:      map[string]string{},
@@ -218,7 +218,7 @@ func (s *P2PServer) Run() {
 	go s.sync(context.Background())
 	if s.nodeType == Miner {
 		go s.mining()
-		s.startMining <- struct{}{} // 启动挖矿
+		// s.startMining <- struct{}{} // 启动挖矿
 	}
 
 	select {}
@@ -253,7 +253,7 @@ func (s *P2PServer) init(conf *config.Config) {
 		NumNodes: func() int {
 			alive := s.memberlist.NumMembers()
 			return alive
-		}, // 集群中的节点数
+		},                 // 集群中的节点数
 		RetransmitMult: 3, // 发送失败时的重试次数
 	}
 
@@ -269,12 +269,12 @@ func (s *P2PServer) mining() {
 
 	mineBlock := func(ctx context.Context) {
 		for {
-			s.localLocker.RLock()
-			if s.local.Height < s.remote.Height {
-				s.localLocker.RUnlock()
+			localHeight := atomic.LoadUint64(&s.local.Height)
+			remoteHeight := atomic.LoadUint64(&s.local.Height)
+
+			if localHeight < remoteHeight {
 				return
 			}
-			s.localLocker.RUnlock()
 
 			err := s.chain.MineBlock(ctx, s.rewardAddress)
 			if err != nil {
@@ -294,9 +294,7 @@ func (s *P2PServer) mining() {
 			log.Info("mining block success, height: ", s.chain.GetLatestBlock().Height)
 			// 挖到区块
 			// 1、更新本地状态
-			s.localLocker.Lock()
-			s.local.Height = s.chain.GetLatestBlock().Height
-			s.localLocker.Unlock()
+			atomic.SwapUint64(&s.local.Height, s.chain.GetLatestBlock().Height)
 
 			// 2、广播区块
 			m := &MsgBlock{
@@ -321,6 +319,7 @@ func (s *P2PServer) mining() {
 		select {
 		case <-s.stopMining:
 			if cancel != nil {
+				log.Debug("cancel mining...")
 				cancel()
 				cancel = nil
 			}
@@ -330,6 +329,7 @@ func (s *P2PServer) mining() {
 				break
 			}
 
+			log.Debug("start mining...")
 			ctx, cancel = context.WithCancel(context.Background())
 			go mineBlock(ctx)
 		}
@@ -344,18 +344,18 @@ func (s *P2PServer) sync(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			s.localLocker.RLock()
-			if s.local.Height >= s.remote.Height {
-				s.localLocker.RUnlock()
+			start := atomic.LoadUint64(&s.local.Height)
+			end := atomic.LoadUint64(&s.remote.Height)
+
+			if start >= end {
 				if s.nodeType == Miner {
 					// 区块继续挖矿
 					s.startMining <- struct{}{}
-					log.Debug("restart mining")
 				}
-				return
+				break
 			}
-			start, end := s.local.Height, s.remote.Height
-			s.localLocker.RUnlock()
+
+			log.Debug("do sync...")
 
 			const maxCount = 2000 // 一次同步区块的最大数量
 			if end-start > maxCount {
@@ -390,15 +390,13 @@ func (s *P2PServer) sync(ctx context.Context) {
 				log.Fatal("illegal node type")
 			}
 
-			for i := 0; i < 3; i++ {
-				err := s.SendToRandNode(&P2PMessage{
-					Op:   op,
-					From: s.FullAddress(),
-					Body: data,
-				})
-				if err != nil {
-					log.Errorf("send to rand node failed: %v", err)
-				}
+			err := s.SendToRandNode(&P2PMessage{
+				Op:   op,
+				From: s.FullAddress(),
+				Body: data,
+			})
+			if err != nil {
+				log.Errorf("send to rand node failed: %v", err)
 			}
 		}
 	}
@@ -408,7 +406,7 @@ func (s *P2PServer) dispatchMessage(ctx context.Context) {
 	for {
 		select {
 		case msg := <-s.msgs:
-			go s.handleMessage(msg)
+			s.handleMessage(msg)
 		case <-ctx.Done():
 			return
 		}
@@ -445,15 +443,13 @@ func (s *P2PServer) handleMessage(msg *P2PMessage) {
 
 			resp := MsgBlock{Blocks: make([]*Block, 0)}
 			for height := req.Start; height <= req.End; height++ {
-				if height <= s.chain.GetLatestBlock().Height {
-					block, err := s.chain.GetBlock(height)
-					if err != nil {
-						log.Errorf("get block failed, height:%d err:%v", height, err)
-						break
-					}
-					// log.Info("find block: ", block.Height)
-					resp.Blocks = append(resp.Blocks, block)
+				block, err := s.chain.GetBlock(height)
+				if err != nil {
+					log.Warnf("get block failed, height:%d err:%v", height, err)
+					break
 				}
+				// log.Info("find block: ", block.Height)
+				resp.Blocks = append(resp.Blocks, block)
 			}
 			if len(resp.Blocks) == 0 {
 				break
@@ -478,35 +474,29 @@ func (s *P2PServer) handleMessage(msg *P2PMessage) {
 			}
 
 			isSync := false
-			s.localLocker.Lock()
 			for _, block := range req.Blocks {
-				if (s.chain.GetLatestBlock() == nil && block.Height == 0) ||
-					block.Height == s.local.Height+1 {
-
-					if !isSync {
-						log.Debug("begin sync...")
-						isSync = true
-						if s.nodeType == Miner {
-							log.Debug("stop mining...")
-							s.stopMining <- struct{}{}
-						}
-					}
-
-					// test
-					//tmp, _ := json.MarshalIndent(block, "", "\t")
-					//log.Debug(string(tmp))
-
+				if s.chain.GetLatestBlock() == nil && block.Height == 0 {
 					if err = s.chain.AddBlock(block); err != nil {
-						log.Errorf("add block error: %v", err)
-						break
+						log.Warnf("add block error: %v", err)
+						return
 					}
+					log.Infof("sync block, height: %d", block.Height)
+					atomic.SwapUint64(&s.local.Height, 0)
+					isSync = true
 
-					log.Debugf("sync block, height: %d", block.Height)
-					s.local.Height = block.Height
-					//fmt.Print(".")
+				} else if block.Height == atomic.LoadUint64(&s.local.Height)+1 {
+					if s.nodeType == Miner {
+						s.stopMining <- struct{}{}
+					}
+					if err = s.chain.AddBlock(block); err != nil {
+						log.Warnf("add block error: %v", err)
+						return
+					}
+					log.Infof("sync block, height: %d", block.Height)
+					atomic.CompareAndSwapUint64(&s.local.Height, block.Height-1, block.Height)
+					isSync = true
 				}
 			}
-			s.localLocker.Unlock()
 
 			if !isSync {
 				return
@@ -515,11 +505,10 @@ func (s *P2PServer) handleMessage(msg *P2PMessage) {
 			//fmt.Println()
 			log.Debug("sync end, local height:", s.local.Height)
 
-			s.localLocker.RLock()
-			if s.nodeType == Miner && s.local.Height >= s.remote.Height {
+			if s.nodeType == Miner &&
+				atomic.LoadUint64(&s.local.Height) >= atomic.LoadUint64(&s.remote.Height) {
 				s.startMining <- struct{}{}
 			}
-			s.localLocker.RUnlock()
 		}
 
 	default:
@@ -571,10 +560,8 @@ func (s *P2PServer) GetBroadcasts(overhead, limit int) [][]byte {
 // 参数：
 // 		join: 是否为刚加入网络，true:是， false：否
 func (s *P2PServer) LocalState(join bool) []byte {
-	s.localLocker.RLock()
-	state := s.local.Marshal()
-	s.localLocker.RUnlock()
-	return state
+	state := *s.local
+	return state.Marshal()
 }
 
 // MergeRemoteState 更新状态
@@ -587,12 +574,13 @@ func (s *P2PServer) MergeRemoteState(data []byte, join bool) {
 	if err := state.Unmarshal(data); err != nil {
 		log.Fatal("unmarshal state failed: ", err)
 	}
-	if state.Height < s.remote.Height {
+	if state.Height < atomic.LoadUint64(&s.remote.Height) {
 		return
 	}
 	// log.Info("sync remote state:", state.Height)
-	_ = s.remote.Unmarshal(data)
-	log.Debugf("merge remote height: %d", s.remote.Height)
+
+	atomic.SwapUint64(&s.remote.Height, state.Height)
+	log.Infof("merge remote height: %d, local height: %d", s.remote.Height, s.local.Height)
 }
 
 func (s *P2PServer) NotifyJoin(node *memberlist.Node) {
