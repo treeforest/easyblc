@@ -29,7 +29,7 @@ type DAO struct {
 }
 
 func New(dbPath string) *DAO {
-	levelDB, err := leveldb.OpenFile(filepath.Join(dbPath, dbName), nil)
+	levelDB, err := leveldb.OpenFile(filepath.Join(dbPath, dbName), &opt.Options{})
 	if err != nil {
 		log.Fatalf("open leveldb [%s] error [%v]", dbName, err)
 	}
@@ -67,6 +67,15 @@ func (o *DAO) GetLatestBlockHash() []byte {
 }
 
 func (o *DAO) GetBlock(hash []byte) ([]byte, error) {
+	return o.DB.Get(hash, nil)
+}
+
+func (o *DAO) GetBlockByHeight(height uint64) ([]byte, error) {
+	heightKey := heightPrefix + strconv.FormatUint(height, 16)
+	hash, err := o.DB.Get([]byte(heightKey), nil)
+	if err != nil {
+		return nil, fmt.Errorf("get block hash failed:%v", err)
+	}
 	return o.DB.Get(hash, nil)
 }
 

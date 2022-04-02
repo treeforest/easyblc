@@ -1,6 +1,7 @@
 package client
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"github.com/treeforest/easyblc/internal/blc"
@@ -141,13 +142,13 @@ HELP:
 }
 
 func (c *Command) printHeight() {
-	bc := blc.GetBlockChain(c.dbPath)
+	bc := blc.MustGetExistBlockChain(c.dbPath)
 	defer bc.Close()
 	log.Infof("当前高度：%d", bc.GetLatestBlock().Height)
 }
 
 func (c *Command) printTxPool() {
-	bc := blc.GetBlockChain(c.dbPath)
+	bc := blc.MustGetExistBlockChain(c.dbPath)
 	defer bc.Close()
 
 	fmt.Println("tx pool: ")
@@ -178,7 +179,7 @@ func (c *Command) printTxPool() {
 }
 
 func (c *Command) getBalance() {
-	bc := blc.GetBlockChain(c.dbPath)
+	bc := blc.MustGetExistBlockChain(c.dbPath)
 	defer bc.Close()
 
 	total := uint64(0)
@@ -199,11 +200,11 @@ func (c *Command) mining(address string, n int) {
 	if !utils.IsValidAddress(address) {
 		log.Fatal("ADDRESS is not a valid address")
 	}
-	bc := blc.GetBlockChain(c.dbPath)
+	bc := blc.MustGetExistBlockChain(c.dbPath)
 	defer bc.Close()
 
 	for i := 0; i < n; i++ {
-		if err := bc.MineBlock(address); err != nil {
+		if err := bc.MineBlock(context.Background(), address); err != nil {
 			log.Fatal("mine block failed:", err)
 		}
 	}
@@ -228,7 +229,7 @@ func (c *Command) send(from, to string, amount uint64) {
 		log.Fatal("not found wallet:", err)
 	}
 
-	bc := blc.GetBlockChain(c.dbPath)
+	bc := blc.MustGetExistBlockChain(c.dbPath)
 	defer bc.Close()
 
 	// 检查余额
@@ -340,7 +341,7 @@ func (c *Command) createBlockChainWithGenesisBlock(address string) {
 }
 
 func (c *Command) printChain() {
-	bc := blc.GetBlockChain(c.dbPath)
+	bc := blc.MustGetExistBlockChain(c.dbPath)
 	defer bc.Close()
 
 	fmt.Println("blockchain:")

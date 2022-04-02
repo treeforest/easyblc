@@ -119,6 +119,6 @@ func (s *RpcServer) QueryUTXO(req pb.QueryReq, reply *pb.QueryReply) error {
 
 // Height 区块高度
 func (s *RpcServer) Height(args interface{}, reply *uint64) error {
-	*reply = s.chain.latestBlock.Height
+	*reply = s.chain.GetLatestBlock().Height
 	return nil
 }

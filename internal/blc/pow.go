@@ -26,22 +26,22 @@ func NewProofOfWork(block *Block) *ProofOfWork {
 }
 
 // Mining 挖矿
-func (pow *ProofOfWork) Mining() ([32]byte, uint64, bool) {
+func (pow *ProofOfWork) Mining(ctx context.Context) ([32]byte, uint64, bool) {
 	// 组装挖矿结构 |preHash|height|timestamp|merkelRoot|targetBit|nonce|
 	data := pow.block.MarshalHeaderWithoutNonceAndHash()
 	wg := sync.WaitGroup{}
-	ctx, cancel := context.WithCancel(context.Background())
+	c, cancel := context.WithCancel(ctx)
 	nonceCh := make(chan uint64, 1)
-	done := make(chan struct{}, 2)
+	done := make(chan struct{}, 1)
 	now := time.Now()
 
 	// 开n个协程同时挖矿
-	n := runtime.NumCPU()
+	n := runtime.NumCPU() / 2
 	wg.Add(n)
 	for i := uint64(0); i < uint64(n); i++ {
 		begin := math.MaxUint64 / uint64(n) * i
 		end := math.MaxUint64 / uint64(n) * (i + 1)
-		go pow.mining(ctx, &wg, begin, end, data, nonceCh)
+		go pow.mining(c, &wg, begin, end, data, nonceCh)
 	}
 	go func() {
 		wg.Wait()
@@ -50,16 +50,22 @@ func (pow *ProofOfWork) Mining() ([32]byte, uint64, bool) {
 
 	for {
 		select {
+		case <-ctx.Done():
+			// 取消挖矿
+			cancel()
+			<-done
+			log.Debug("cancel mining")
+			return [32]byte{}, 0, false
 		case nonce := <-nonceCh:
 			sub := time.Now().Sub(now)
-			log.Debugf("挖矿用时: %fs(%dms)", sub.Seconds(), sub.Milliseconds())
+			log.Debugf("mining time used: %fs(%dms)", sub.Seconds(), sub.Milliseconds())
 
 			cancel() // 退出协程
 			hash := sha256.Sum256(append(data, []byte(strconv.FormatUint(nonce, 10))...))
 			return hash, nonce, true
 		case <-done:
 			// 需要进一步修改coinbase data，然后再次挖矿
-			cancel()
+			cancel() // 此时调用只是为了释放cancel函数
 			return [32]byte{}, 0, false
 		}
 	}
@@ -103,7 +109,7 @@ var (
 	PowLimit = UnCompact(uint32(0x1e00ffff))
 )
 
-// GetNextWorkRequired 计算难度目标值，规定10分钟出一个块
+// GetNextWorkRequired 计算下一个区块的难度目标值，规定10分钟出一个块
 func (chain *BlockChain) GetNextWorkRequired() uint32 {
 	lastBlock := chain.GetLatestBlock()
 	if (lastBlock.Height+1)%DifficultyAdjustmentInterval != 0 {

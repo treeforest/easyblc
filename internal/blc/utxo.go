@@ -1,15 +1,25 @@
 package blc
 
+import "sync"
+
 type UTXOSet struct {
 	utxoSet map[[32]byte]map[int]*TxOutput // TxHash => Index => TxOut
 	Size    int                            // UTXO 个数
+	locker  sync.RWMutex
 }
 
 func NewUTXOSet() *UTXOSet {
-	return &UTXOSet{utxoSet: map[[32]byte]map[int]*TxOutput{}, Size: 0}
+	return &UTXOSet{
+		utxoSet: map[[32]byte]map[int]*TxOutput{},
+		Size:    0,
+		locker:  sync.RWMutex{},
+	}
 }
 
 func (s *UTXOSet) Traverse(fn func(txHash [32]byte, index int, output *TxOutput)) {
+	s.locker.RLock()
+	defer s.locker.RUnlock()
+
 	for txHash, outputs := range s.utxoSet {
 		for index, output := range outputs {
 			fn(txHash, index, output)
@@ -18,6 +28,9 @@ func (s *UTXOSet) Traverse(fn func(txHash [32]byte, index int, output *TxOutput)
 }
 
 func (s *UTXOSet) Put(txHash [32]byte, index int, output *TxOutput) {
+	s.locker.Lock()
+	defer s.locker.Unlock()
+
 	if _, ok := s.utxoSet[txHash]; !ok {
 		s.utxoSet[txHash] = make(map[int]*TxOutput)
 	}
@@ -29,6 +42,10 @@ func (s *UTXOSet) Remove(txHash [32]byte, index int) {
 	if !s.Exist(txHash, index) {
 		return
 	}
+
+	s.locker.Lock()
+	defer s.locker.Unlock()
+
 	delete(s.utxoSet[txHash], index)
 	if len(s.utxoSet[txHash]) == 0 {
 		delete(s.utxoSet, txHash)
@@ -40,15 +57,26 @@ func (s *UTXOSet) Get(txHash [32]byte, index int) *TxOutput {
 	if !s.Exist(txHash, index) {
 		return nil
 	}
-	return s.utxoSet[txHash][index]
+
+	s.locker.RLock()
+	out := s.utxoSet[txHash][index]
+	s.locker.RUnlock()
+
+	return out
 }
 
 func (s *UTXOSet) Has(txHash [32]byte) bool {
+	s.locker.RLock()
 	_, ok := s.utxoSet[txHash]
+	s.locker.RUnlock()
+
 	return ok
 }
 
 func (s *UTXOSet) Exist(txHash [32]byte, index int) bool {
+	s.locker.RLock()
+	s.locker.RUnlock()
+
 	if _, ok := s.utxoSet[txHash]; !ok {
 		return false
 	}

@@ -1,9 +1,9 @@
 package blc
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"fmt"
+	log "github.com/treeforest/logger"
 	"time"
 
 	gob "github.com/treeforest/easyblc/pkg/gob"
@@ -62,14 +62,32 @@ func (tx *Transaction) HashTransaction() error {
 
 // CalculateHash 计算区块哈希
 func (tx *Transaction) CalculateHash() ([32]byte, error) {
-	tmp := *tx
-	tmp.Hash = [32]byte{}
-	data, err := gob.Encode(&tmp)
+	tmp := Transaction{
+		Hash:  [32]byte{},
+		Vins:  []*TxInput{},
+		Vouts: []*TxOutput{},
+		Time:  tx.Time,
+	}
+	copy(tmp.Vins, tx.Vins)
+	copy(tmp.Vouts, tx.Vouts)
+
+	data, err := gob.Encode(tmp)
 	if err != nil {
 		return [32]byte{}, err
 	}
+	log.Debug("data len=", len(data))
 	hash := sha256.Sum256(data)
 	return hash, nil
+}
+
+func (tx *Transaction) IsCoinbase() (uint64, bool) {
+	if len(tx.Vins) != 1 || len(tx.Vouts) != 1 {
+		return 0, false
+	}
+	if tx.Vins[0].IsCoinbase() == false {
+		return 0, false
+	}
+	return tx.Vouts[0].Value, true
 }
 
 func (tx *Transaction) Marshal() ([]byte, error) {
@@ -79,9 +97,3 @@ func (tx *Transaction) Marshal() ([]byte, error) {
 func (tx *Transaction) Unmarshal(data []byte) error {
 	return gob.Decode(data, tx)
 }
-
-type TransactionSlice []*Transaction
-
-func (x TransactionSlice) Len() int           { return len(x) }
-func (x TransactionSlice) Less(i, j int) bool { return bytes.Compare(x[i].Hash[:], x[j].Hash[:]) == -1 }
-func (x TransactionSlice) Swap(i, j int)      { x[i], x[j] = x[j], x[i] }

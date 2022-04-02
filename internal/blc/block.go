@@ -2,11 +2,12 @@ package blc
 
 import (
 	"bytes"
+	"context"
+	"crypto/sha256"
 	"fmt"
 	gob "github.com/treeforest/easyblc/pkg/gob"
 	"github.com/treeforest/easyblc/pkg/merkle"
 	log "github.com/treeforest/logger"
-	"sort"
 	"strconv"
 	"time"
 )
@@ -27,12 +28,11 @@ type Block struct {
 }
 
 func CreateGenesisBlock(txs []*Transaction) (*Block, bool) {
-	return NewBlock(0x1e00ffff, 0, [32]byte{}, txs)
+	return NewBlock(context.Background(), 0x1e00ffff, 0, [32]byte{}, txs)
 }
 
-func NewBlock(bits uint32, height uint64, preHash [32]byte, txs []*Transaction) (*Block, bool) {
-	// 对交易进行排序，使得默克尔树具有唯一性
-	sort.Sort(TransactionSlice(txs))
+func NewBlock(ctx context.Context, bits uint32, height uint64,
+	preHash [32]byte, txs []*Transaction) (*Block, bool) {
 
 	block := &Block{
 		Version:      1,
@@ -47,20 +47,23 @@ func NewBlock(bits uint32, height uint64, preHash [32]byte, txs []*Transaction) 
 	}
 
 	block.BuildMerkleTree()
-	succ := block.Mining()
+	succ := block.Mining(ctx)
 	if !succ {
 		return nil, false
 	}
 	return block, true
 }
 
-func (b *Block) Mining() bool {
+func (b *Block) Mining(ctx context.Context) bool {
 	miner := NewProofOfWork(b)
 	log.Debug("begin mining...")
-	hash, nonce, succ := miner.Mining() // 挖矿
+
+	hash, nonce, succ := miner.Mining(ctx) // 挖矿
+
 	if !succ {
 		return false
 	}
+
 	b.Hash = hash
 	b.Nonce = nonce
 	log.Debug("nonce：", nonce)
@@ -104,6 +107,11 @@ func (b *Block) MarshalHeaderWithoutHash() []byte {
 	return append(data, []byte(strconv.FormatUint(b.Nonce, 10))...)
 }
 
+func (b *Block) CalculateHash() [32]byte {
+	data := b.MarshalHeaderWithoutHash()
+	return sha256.Sum256(data)
+}
+
 func (b *Block) BuildMerkleTree() {
 	var txHashes [][]byte // 交易的哈希
 	for _, tx := range b.Transactions {
@@ -113,6 +121,15 @@ func (b *Block) BuildMerkleTree() {
 	merkleRoot := tree.BuildWithHashes(txHashes)
 	b.MerkleTree = tree
 	b.MerkelRoot = merkleRoot
+}
+
+// CalculateMerkleRoot 计算交易哈希，当校验时使用
+func (b *Block) CalculateMerkleRoot() []byte {
+	var txHashes [][]byte // 交易的哈希
+	for _, tx := range b.Transactions {
+		txHashes = append(txHashes, tx.Hash[:])
+	}
+	return merkle.New().BuildWithHashes(txHashes)
 }
 
 func (b *Block) GetBlockTime() int64 {

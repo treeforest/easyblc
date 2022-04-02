@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	log "github.com/treeforest/logger"
+	"sort"
 )
 
 type Tree struct {
@@ -22,11 +23,20 @@ func New() *Tree {
 	return &Tree{Nodes: make([][]*Node, 0), MerkleRoot: nil}
 }
 
+type HashSlices [][]byte
+
+func (s HashSlices) Len() int           { return len(s) }
+func (s HashSlices) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
+func (s HashSlices) Less(i, j int) bool { return bytes.Compare(s[i], s[j]) == 1 }
+
 // BuildWithHashes 生成默克尔树
 func (t *Tree) BuildWithHashes(sha256Hashes [][]byte) []byte {
 	if sha256Hashes == nil || len(sha256Hashes) <= 0 {
 		log.Fatal("transaction hashed is nil")
 	}
+
+	// 有序性
+	sort.Sort(HashSlices(sha256Hashes))
 
 	if len(sha256Hashes)%2 != 0 {
 		// 若交易为奇数份，拷贝最后一份
