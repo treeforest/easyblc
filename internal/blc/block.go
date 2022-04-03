@@ -28,7 +28,8 @@ type Block struct {
 }
 
 func CreateGenesisBlock(txs []*Transaction) (*Block, bool) {
-	return NewBlock(context.Background(), 0x1e00ffff, 0, [32]byte{}, txs)
+	return NewBlock(context.Background(), 0x1d00ffff, 0, [32]byte{}, txs)
+	//return NewBlock(context.Background(), 0x1e00ffff, 0, [32]byte{}, txs)
 }
 
 func NewBlock(ctx context.Context, bits uint32, height uint64,

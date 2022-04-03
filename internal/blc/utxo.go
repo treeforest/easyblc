@@ -86,6 +86,11 @@ func (s *UTXOSet) Exist(txHash [32]byte, index int) bool {
 	return true
 }
 
+func (chain *BlockChain) resetUTXOSet() error {
+	chain.utxoSet = NewUTXOSet()
+	return chain.updateUTXOSet()
+}
+
 // updateUTXOSet 更新 utxo 集合
 func (chain *BlockChain) updateUTXOSet() error {
 	if chain.utxoSet == nil {
@@ -94,7 +99,7 @@ func (chain *BlockChain) updateUTXOSet() error {
 	spent := make(map[[32]byte]map[uint32]struct{})
 
 	// log.Debug("[blockchain utxo set]")
-	err := chain.Traverse(func(block *Block) {
+	err := chain.Traverse(func(block *Block) bool {
 		for _, tx := range block.Transactions {
 			// 交易输入
 			for _, vin := range tx.Vins {
@@ -119,6 +124,7 @@ func (chain *BlockChain) updateUTXOSet() error {
 				chain.utxoSet.Put(tx.Hash, i, out)
 			}
 		}
+		return true
 	})
 	if err != nil {
 		return err

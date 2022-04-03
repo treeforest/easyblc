@@ -7,7 +7,7 @@ import (
 
 // TxPool 交易池
 type TxPool struct {
-	mu    sync.Mutex                // locker
+	mu    sync.Mutex                // rw
 	Fees  *UniquePriorityQueue      // sorted Fees,priority Queue
 	Cache map[uint64][]*TxPoolEntry // fee => txs
 	Cap   int                       // 最大容量

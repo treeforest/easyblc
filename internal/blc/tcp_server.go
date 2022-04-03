@@ -86,12 +86,13 @@ func (s *RpcServer) QueryTx(req pb.QueryReq, reply *pb.QueryReply) error {
 	}
 
 	txs := make([]*Transaction, 0)
-	_ = s.chain.Traverse(func(block *Block) {
+	_ = s.chain.Traverse(func(block *Block) bool {
 		for _, tx := range block.Transactions {
 			if filter.Test(tx.Hash[:]) {
 				txs = append(txs, tx)
 			}
 		}
+		return true
 	})
 
 	reply.Body = txs

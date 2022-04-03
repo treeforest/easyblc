@@ -55,16 +55,10 @@ func MustGetExistBlockChain(dbPath string) *BlockChain {
 		log.Fatal("find utxo set failed:", err)
 	}
 
-	data, err := blc.dao.GetBlock(blc.dao.GetLatestBlockHash())
+	err = blc.loadLatestBlock()
 	if err != nil {
-		log.Fatal("get block failed:", err)
+		log.Fatal("local latest block failed:", err)
 	}
-	var block Block
-	err = block.Unmarshal(data)
-	if err != nil {
-		log.Fatal("block unmarshal failed:", err)
-	}
-	blc.latestBlock = &block
 
 	return blc
 }
@@ -103,6 +97,22 @@ func CreateBlockChainWithGenesisBlock(dbPath, address string) *BlockChain {
 	}
 
 	return blc
+}
+
+func (chain *BlockChain) loadLatestBlock() error {
+	data, err := chain.dao.GetBlock(chain.dao.GetLatestBlockHash())
+	if err != nil {
+		return fmt.Errorf("get latest block failed: %v", err)
+	}
+	var block Block
+	err = block.Unmarshal(data)
+	if err != nil {
+		return fmt.Errorf("block unmarshal failed: %v", err)
+	}
+	chain.locker.Lock()
+	chain.latestBlock = &block
+	chain.locker.Unlock()
+	return nil
 }
 
 func (chain *BlockChain) AddBlock(block *Block) error {
@@ -323,20 +333,16 @@ func (chain *BlockChain) Close() {
 
 // GetAncestor 获取指定高度的祖先区块
 func (chain *BlockChain) GetAncestor(height uint64) (*Block, error) {
-	if height < 0 || chain.GetLatestBlock().Height < height {
+	data, err := chain.dao.GetBlockByHeight(height)
+	if err != nil {
 		return nil, errors.New("invalid height")
 	}
-	var block *Block
-	err := chain.Traverse(func(b *Block) {
-		if b.Height == height {
-			block = b
-			return
-		}
-	})
+	var block Block
+	err = block.Unmarshal(data)
 	if err != nil {
-		return nil, fmt.Errorf("traverse blockchain error:%v", err)
+		return nil, fmt.Errorf("unmarshal block failed:%v", err)
 	}
-	return block, nil
+	return &block, nil
 }
 
 // GetLatestBlock 获取最新区块
@@ -357,8 +363,8 @@ func (chain *BlockChain) GetBlockIterator() *BlockIterator {
 	return NewBlockIterator(chain.dao)
 }
 
-// Traverse 遍历区块链
-func (chain *BlockChain) Traverse(fn func(block *Block)) error {
+// Traverse 遍历区块链,若返回false，则终止遍历
+func (chain *BlockChain) Traverse(fn func(block *Block) bool) error {
 	it := chain.GetBlockIterator()
 	for {
 		b, err := it.Next()
@@ -368,7 +374,9 @@ func (chain *BlockChain) Traverse(fn func(block *Block)) error {
 		if b == nil {
 			break
 		}
-		fn(b)
+		if fn(b) == false {
+			return nil
+		}
 	}
 	return nil
 }
@@ -439,7 +447,39 @@ func (chain *BlockChain) IsValidTx(tx *Transaction) (uint64, bool) {
 	return fee, true
 }
 
+// RemoveBlockFrom 移除区块高度及往后的区块，当产生分叉，需要合并链时调用
+func (chain *BlockChain) RemoveBlockFrom(start uint64) error {
+	height := chain.GetLatestBlock().Height
+	if start < 0 || start > height {
+		return nil
+	}
+
+	for ; height >= start; height-- {
+		// TODO: 回收交易 或者 通过网络同步
+		// 移除区块
+		_ = chain.dao.RemoveLatestBlock()
+	}
+
+	// 重新设置 latest block
+	err := chain.loadLatestBlock()
+	if err != nil {
+		return fmt.Errorf("local latest block failed:%v", err)
+	}
+
+	// 重置utxo结合
+	err = chain.resetUTXOSet()
+	if err != nil {
+		return fmt.Errorf("reset utxo set failed:%v", err)
+	}
+
+	return nil
+}
+
 func (chain *BlockChain) GetBlock(height uint64) (*Block, error) {
+	if chain.GetLatestBlock() == nil {
+		return nil, errors.New("blockchain is null")
+	}
+
 	if height < 0 || height > chain.GetLatestBlock().Height {
 		return nil, errors.New("invalid height")
 	}

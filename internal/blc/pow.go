@@ -36,7 +36,7 @@ func (pow *ProofOfWork) Mining(ctx context.Context) ([32]byte, uint64, bool) {
 	now := time.Now()
 
 	// 开n个协程同时挖矿
-	n := runtime.NumCPU() / 2
+	n := runtime.NumCPU()
 	wg.Add(n)
 	for i := uint64(0); i < uint64(n); i++ {
 		begin := math.MaxUint64 / uint64(n) * i
@@ -100,13 +100,13 @@ func (pow *ProofOfWork) mining(ctx context.Context, wg *sync.WaitGroup, begin, e
 const (
 	// DifficultyAdjustmentInterval 难度值调整区块间隔
 	DifficultyAdjustmentInterval = uint64(2016)
-	// PowTargetTimespan 预定出2100个块规定的时间（每个出块时间大约为10秒钟）
-	PowTargetTimespan = 10 * 2016
+	// PowTargetTimespan 预定出2100个块规定的时间（每个出块时间大约为10分钟）
+	PowTargetTimespan = 60 * 10 * 2016
 )
 
 var (
 	// PowLimit 最低难度值
-	PowLimit = UnCompact(uint32(0x1e00ffff))
+	PowLimit = UnCompact(uint32(0x1d00ffff))
 )
 
 // GetNextWorkRequired 计算下一个区块的难度目标值，规定10分钟出一个块

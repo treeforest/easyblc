@@ -345,7 +345,7 @@ func (c *Command) printChain() {
 	defer bc.Close()
 
 	fmt.Println("blockchain:")
-	err := bc.Traverse(func(block *blc.Block) {
+	err := bc.Traverse(func(block *blc.Block) bool {
 		fmt.Printf("\tHeight:%d\n", block.Height)
 		fmt.Printf("\tHash:%x\n", block.Hash)
 		fmt.Printf("\tPrevkHash:%x\n", block.PreHash)
@@ -376,6 +376,7 @@ func (c *Command) printChain() {
 			}
 			fmt.Printf("\n")
 		}
+		return true
 	})
 	if err != nil {
 		log.Fatalf("traverse block error:%v", err)
