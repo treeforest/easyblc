@@ -382,8 +382,8 @@ func (s *P2PServer) syncTrigger() {
 			remoteState := s.remote.Copy()
 
 			if s.local.HasGenisisBlock {
-				// 若是矿工，即使对方先挖出一个块，没关系，我自继续挖，争取做最长链
-				if s.nodeType == Miner && localState.GetHeight()+1 >= remoteState.GetHeight() {
+				// 若是矿工，即使对方先挖出 SyncInterval 个块，没关系，我自继续挖，争取做最长链
+				if s.nodeType == Miner && localState.GetHeight()+s.conf.SyncInterval >= remoteState.GetHeight() {
 					// 矿工继续挖矿
 					s.startMining <- struct{}{}
 					ticker.Reset(time.Millisecond * 500)
@@ -586,7 +586,15 @@ func (s *P2PServer) NotifyMsg(data []byte) {
 // GetBroadcasts 当gossip定时事件触发，将回调该函数.注意：！！！最多只能发送limit-overhead的字节，
 // 数据过多将自动丢弃数据
 func (s *P2PServer) GetBroadcasts(overhead, limit int) [][]byte {
-	gossipMsg := s.broadcasts.GetBroadcasts(overhead, limit)
+	var gossipMsg [][]byte
+	defer func() {
+		if err := recover(); err != nil {
+			// memberlist 原生队列bug，会导致panic，目前还没找到问题在哪
+			log.Error(err)
+			gossipMsg = [][]byte{}
+		}
+	}()
+	gossipMsg = s.broadcasts.GetBroadcasts(overhead, limit)
 	need := 0
 	for i := 0; i < len(gossipMsg); i++ {
 		need += len(gossipMsg[i])

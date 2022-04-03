@@ -17,11 +17,12 @@ func init() {
 }
 
 type Config struct {
-	Port     int      `yaml:"port"`     // 节点端口
-	Type     uint32   `yaml:"type"`     // 节点类型
-	DBPath   string   `yaml:"dbpath"`   // 区块链数据库路径
-	Existing []string `yaml:"existing"` // 现有区块链节点地址
-	Address  string   `yaml:"address"`  // 获取挖矿奖励的地址
+	Port         int      `yaml:"port"`         // 节点端口
+	Type         uint32   `yaml:"type"`         // 节点类型
+	DBPath       string   `yaml:"dbpath"`       // 区块链数据库路径
+	Existing     []string `yaml:"existing"`     // 现有区块链节点地址
+	Address      string   `yaml:"address"`      // 获取挖矿奖励的地址
+	SyncInterval uint64   `yaml:"syncinterval"` // 同步间隔
 }
 
 func Load() (*Config, error) {

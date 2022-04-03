@@ -3,7 +3,6 @@ package blc
 import (
 	"crypto/sha256"
 	"fmt"
-	log "github.com/treeforest/logger"
 	"time"
 
 	gob "github.com/treeforest/easyblc/pkg/gob"
@@ -75,7 +74,7 @@ func (tx *Transaction) CalculateHash() ([32]byte, error) {
 	if err != nil {
 		return [32]byte{}, err
 	}
-	log.Debug("data len=", len(data))
+	//log.Debug("data len=", len(data))
 	hash := sha256.Sum256(data)
 	return hash, nil
 }
