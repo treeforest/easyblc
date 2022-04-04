@@ -64,12 +64,8 @@ func MustGetExistBlockChain(dbPath string) *BlockChain {
 }
 
 func CreateBlockChainWithGenesisBlock(dbPath, address string) *BlockChain {
-	if !dao.IsNotExistDB(dbPath) {
-		log.Fatal("block database already exist")
-	}
-
-	if !utils.IsValidAddress(address) {
-		log.Fatalf("invalid address: %s", address)
+	if dao.IsNotExistDB(dbPath) {
+		log.Fatal("block database not exist")
 	}
 
 	d := dao.New(dbPath)
@@ -80,23 +76,30 @@ func CreateBlockChainWithGenesisBlock(dbPath, address string) *BlockChain {
 		latestBlock: nil,
 	}
 
-	reward := blc.GetBlockSubsidy(0)
+	blc.MineGenesisBlock(address)
+	return blc
+}
+
+func (chain *BlockChain) MineGenesisBlock(address string) {
+	if !utils.IsValidAddress(address) {
+		log.Fatalf("invalid address: %s", address)
+	}
+
+	reward := chain.GetBlockSubsidy(0)
 	coinbaseTx, err := NewCoinbaseTransaction(reward, address, []byte("挖矿不容易，且挖且珍惜"))
 	if err != nil {
 		log.Fatal("create coinbase transaction failed:", err)
 	}
 
-	block, succ := CreateGenesisBlock([]*Transaction{coinbaseTx})
+	block, succ := CreateGenesisBlock([]Transaction{*coinbaseTx})
 	if !succ {
 		log.Fatal("create Genesis Block failed")
 	}
 
-	err = blc.AddBlock(block)
+	err = chain.AddBlock(block)
 	if err != nil {
 		log.Fatal("add block to chain failed:", err)
 	}
-
-	return blc
 }
 
 func (chain *BlockChain) loadLatestBlock() error {
@@ -322,13 +325,17 @@ func (chain *BlockChain) VerifyBlock(block *Block) bool {
 	return true
 }
 
+var once sync.Once
+
 func (chain *BlockChain) Close() {
-	if err := chain.txPool.Close(); err != nil {
-		log.Fatal("close tx pool failed: ", err)
-	}
-	if err := chain.dao.Close(); err != nil {
-		log.Fatal("close database failed: ", err)
-	}
+	once.Do(func() {
+		if err := chain.txPool.Close(); err != nil {
+			log.Fatal("close tx pool failed: ", err)
+		}
+		if err := chain.dao.Close(); err != nil {
+			log.Fatal("close database failed: ", err)
+		}
+	})
 }
 
 // GetAncestor 获取指定高度的祖先区块
@@ -392,7 +399,7 @@ func (chain *BlockChain) IsValidTx(tx *Transaction) (uint64, bool) {
 		return 0, false
 	}
 	if tx.Hash != hash {
-		log.Debug("transaction hash error")
+		log.Debugf("transaction hash error, dst[%x] src[%x]", hash, tx.Hash)
 		return 0, false
 	}
 
@@ -532,7 +539,7 @@ func (chain *BlockChain) MineBlock(ctx context.Context, address string) error {
 		}
 		requiredBits := chain.GetNextWorkRequired()
 
-		block, succ = NewBlock(ctx, requiredBits, last.Height+1, last.Hash, append([]*Transaction{coinbaseTx}, txs...))
+		block, succ = NewBlock(ctx, requiredBits, last.Height+1, last.Hash, append([]Transaction{*coinbaseTx}, txs...))
 
 		// test
 		//tmp, _ := json.MarshalIndent(block, "", "\t")

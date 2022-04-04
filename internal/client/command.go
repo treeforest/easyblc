@@ -84,52 +84,52 @@ func (c *Command) Run() {
 
 	switch os.Args[1] {
 	case "createblockchain":
-		if !c.parseCommand(cmdCreateBlockchain) || *address == "" {
+		if !parseCommand(cmdCreateBlockchain) || *address == "" {
 			goto HELP
 		}
 		c.createBlockChainWithGenesisBlock(*address)
 	case "printchain":
-		if !c.parseCommand(cmdPrintChain) {
+		if !parseCommand(cmdPrintChain) {
 			goto HELP
 		}
 		c.printChain()
 	case "send":
-		if !c.parseCommand(cmdSend) || *from == "" || *to == "" || *amount <= 0 {
+		if !parseCommand(cmdSend) || *from == "" || *to == "" || *amount <= 0 {
 			goto HELP
 		}
 		c.send(*from, *to, uint64(*amount))
 	case "mining":
-		if !c.parseCommand(cmdMining) || *argMiningRewardAddress == "" || *argMiningNum < 1 {
+		if !parseCommand(cmdMining) || *argMiningRewardAddress == "" || *argMiningNum < 1 {
 			goto HELP
 		}
 		c.mining(*argMiningRewardAddress, *argMiningNum)
 	case "createwallet":
-		if !c.parseCommand(cmdCreateWallet) {
+		if !parseCommand(cmdCreateWallet) {
 			goto HELP
 		}
 		c.createWallet()
 	case "removewallet":
-		if !c.parseCommand(cmdRemoveWallet) || *argRemoveWalletAddress == "" {
+		if !parseCommand(cmdRemoveWallet) || *argRemoveWalletAddress == "" {
 			goto HELP
 		}
 		c.removeWallet(*argRemoveWalletAddress)
 	case "addresses":
-		if !c.parseCommand(cmdAddresses) {
+		if !parseCommand(cmdAddresses) {
 			goto HELP
 		}
 		c.printAddresses()
 	case "getbalance":
-		if !c.parseCommand(cmdGetBalance) {
+		if !parseCommand(cmdGetBalance) {
 			goto HELP
 		}
 		c.getBalance()
 	case "txpool":
-		if !c.parseCommand(cmdTxPool) {
+		if !parseCommand(cmdTxPool) {
 			goto HELP
 		}
 		c.printTxPool()
 	case "height":
-		if !c.parseCommand(cmdHeight) {
+		if !parseCommand(cmdHeight) {
 			goto HELP
 		}
 		c.printHeight()
@@ -152,7 +152,7 @@ func (c *Command) printTxPool() {
 	defer bc.Close()
 
 	fmt.Println("tx pool: ")
-	bc.GetTxPool().Traverse(func(fee uint64, tx *blc.Transaction) {
+	bc.GetTxPool().Traverse(func(fee uint64, tx *blc.Transaction) bool {
 		fmt.Printf("\tfee: %d\n", fee)
 		fmt.Printf("\ttxHash: %x\n", tx.Hash)
 		fmt.Printf("\ttime: %d\n", tx.Time)
@@ -175,6 +175,7 @@ func (c *Command) printTxPool() {
 			fmt.Printf("\t\tscriptPubKey: %x\n", vout.ScriptPubKey)
 		}
 		fmt.Printf("\n")
+		return true
 	})
 }
 
@@ -241,14 +242,14 @@ func (c *Command) send(from, to string, amount uint64) {
 
 	// 交易输入
 	log.Debug("check utxo...")
-	var vins []*blc.TxInput
+	var vins []blc.TxInput
 	utxoSet := bc.GetUTXOSet(from)
-	utxoSet.Traverse(func(txHash [32]byte, index int, output *blc.TxOutput) {
+	utxoSet.Traverse(func(txHash [32]byte, index int, output blc.TxOutput) {
 		vin, err := blc.NewTxInput(txHash, uint32(index), &wallet.Key)
 		if err != nil {
 			log.Fatal("create tx vin failed:", err)
 		}
-		vins = append(vins, vin)
+		vins = append(vins, *vin)
 	})
 
 	// 生成一个找零地址
@@ -267,7 +268,7 @@ func (c *Command) send(from, to string, amount uint64) {
 
 	// 交易输出
 	log.Debug("create transaction output...")
-	var vouts []*blc.TxOutput
+	var vouts []blc.TxOutput
 	vout, err := blc.NewTxOutput(amount, to)
 	if err != nil {
 		log.Fatal("create tx vout failed:", err)
@@ -276,7 +277,7 @@ func (c *Command) send(from, to string, amount uint64) {
 	if err != nil {
 		log.Fatal("create tx vout failed:", err)
 	}
-	vouts = append(vouts, []*blc.TxOutput{vout, changeVout}...)
+	vouts = append(vouts, []blc.TxOutput{*vout, *changeVout}...)
 
 	// 构造交易
 	log.Debug("create transaction...")
@@ -287,7 +288,7 @@ func (c *Command) send(from, to string, amount uint64) {
 
 	// 将交易放入交易池
 	log.Debug("put transaction to txpool...")
-	if err = bc.AddToTxPool(tx); err != nil {
+	if err = bc.AddToTxPool(*tx); err != nil {
 		log.Fatal("put tx to pool failed:", err)
 	}
 
@@ -295,16 +296,6 @@ func (c *Command) send(from, to string, amount uint64) {
 	//if err = bc.MineBlock(from); err != nil {
 	//	log.Fatal("mine block failed:", err)
 	//}
-}
-
-func (c *Command) parseCommand(f *flag.FlagSet) bool {
-	if err := f.Parse(os.Args[2:]); err != nil {
-		log.Fatal("parse command failed!")
-	}
-	if f.Parsed() {
-		return true
-	}
-	return false
 }
 
 func (c *Command) printAddresses() {

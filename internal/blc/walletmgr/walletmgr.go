@@ -1,10 +1,12 @@
 package walletmgr
 
 import (
+	"bytes"
+	"crypto/elliptic"
+	"encoding/gob"
 	"errors"
 	"fmt"
 	"github.com/treeforest/easyblc/internal/blc/walletmgr/wallet"
-	"github.com/treeforest/easyblc/pkg/gob"
 	"io/ioutil"
 	"log"
 	"os"
@@ -35,7 +37,10 @@ func (m *WalletManager) init() {
 	if err != nil {
 		log.Fatal("read wallet file failed:", data)
 	}
-	if err = gob.DecodeP256(data, m); err != nil {
+
+	gob.Register(elliptic.P256())
+	dec := gob.NewDecoder(bytes.NewReader(data))
+	if err = dec.Decode(m); err != nil {
 		log.Fatal("decode p256 failed: ", err)
 	}
 }
@@ -83,11 +88,13 @@ func (m *WalletManager) Has(address string) bool {
 }
 
 func (m *WalletManager) save() error {
-	data, err := gob.EncodeP256(m)
-	if err != nil {
-		return fmt.Errorf("encode p256 failed: %v", err)
+	buf := bytes.NewBuffer(nil)
+	gob.Register(elliptic.P256())
+	enc := gob.NewEncoder(buf)
+	if err := enc.Encode(m); err != nil {
+		return fmt.Errorf("encode failed: %v", err)
 	}
-	err = ioutil.WriteFile(walletFilename, data, 07644)
+	err := ioutil.WriteFile(walletFilename, buf.Bytes(), 07644)
 	if err != nil {
 		return fmt.Errorf("write wallet file failed:%v", err)
 	}

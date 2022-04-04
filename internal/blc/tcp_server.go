@@ -49,7 +49,7 @@ func (s *RpcServer) SendTx(args pb.SendTxReq, reply *pb.SendTxReply) error {
 		return err
 	}
 	// 放入交易池
-	if err := s.chain.AddToTxPool(&tx); err != nil {
+	if err := s.chain.AddToTxPool(tx); err != nil {
 		log.Debugf("add to tx pool failed: %v", err)
 		return err
 	}
@@ -67,7 +67,7 @@ func (s *RpcServer) QueryBalance(req pb.QueryReq, reply *pb.QueryReply) error {
 	}
 
 	balances := make(map[string]uint64)
-	s.chain.utxoSet.Traverse(func(txHash [32]byte, index int, output *TxOutput) {
+	s.chain.utxoSet.Traverse(func(txHash [32]byte, index int, output TxOutput) {
 		if filter.Test([]byte(output.Address)) {
 			balances[output.Address] = s.chain.GetBalance(output.Address)
 		}
@@ -85,7 +85,7 @@ func (s *RpcServer) QueryTx(req pb.QueryReq, reply *pb.QueryReply) error {
 		return err
 	}
 
-	txs := make([]*Transaction, 0)
+	txs := make([]Transaction, 0)
 	_ = s.chain.Traverse(func(block *Block) bool {
 		for _, tx := range block.Transactions {
 			if filter.Test(tx.Hash[:]) {
@@ -108,7 +108,7 @@ func (s *RpcServer) QueryUTXO(req pb.QueryReq, reply *pb.QueryReply) error {
 	}
 
 	utxoSet := NewUTXOSet()
-	s.chain.utxoSet.Traverse(func(txHash [32]byte, index int, output *TxOutput) {
+	s.chain.utxoSet.Traverse(func(txHash [32]byte, index int, output TxOutput) {
 		if filter.Test([]byte(output.Address)) {
 			utxoSet.Put(txHash, index, output)
 		}

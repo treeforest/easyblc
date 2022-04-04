@@ -7,7 +7,6 @@ import (
 	"github.com/hashicorp/memberlist"
 	"github.com/pborman/uuid"
 	"github.com/treeforest/easyblc/internal/blc/config"
-	"github.com/treeforest/easyblc/pkg/gob"
 	"github.com/treeforest/easyblc/pkg/graceful"
 	log "github.com/treeforest/logger"
 	"math/rand"
@@ -34,14 +33,14 @@ func init() {
 // State 节点在网络中的状态信息
 type State struct {
 	Height          uint64 // 节点高度
-	HasGenisisBlock bool   // 区块链状态，true：已有创世区块，false：无创世区块
+	HasGenesisBlock bool   // 区块链状态，true：已有创世区块，false：无创世区块
 	rw              sync.RWMutex
 }
 
 func NewState() *State {
 	return &State{
 		Height:          0,
-		HasGenisisBlock: false,
+		HasGenesisBlock: false,
 		rw:              sync.RWMutex{},
 	}
 }
@@ -49,7 +48,7 @@ func NewState() *State {
 func (s *State) Marshal() []byte {
 	s.rw.RLock()
 	s.rw.RUnlock()
-	data, err := gob.Encode(s)
+	data, err := json.Marshal(s)
 	if err != nil {
 		log.Errorf("state marshal failed: %v", err)
 		return []byte{}
@@ -60,14 +59,14 @@ func (s *State) Marshal() []byte {
 func (s *State) Unmarshal(data []byte) error {
 	s.rw.Lock()
 	defer s.rw.Unlock()
-	return gob.Decode(data, s)
+	return json.Unmarshal(data, s)
 }
 
 func (s *State) Copy() *State {
 	state := NewState()
 	s.rw.RLock()
 	state.Height = s.Height
-	state.HasGenisisBlock = s.HasGenisisBlock
+	state.HasGenesisBlock = s.HasGenesisBlock
 	s.rw.RUnlock()
 	return state
 }
@@ -82,7 +81,7 @@ func (s *State) Set(height uint64, hasBlc bool) {
 	s.rw.Lock()
 	defer s.rw.Unlock()
 	s.Height = height
-	s.HasGenisisBlock = hasBlc
+	s.HasGenesisBlock = hasBlc
 }
 
 // NodeType 节点类型
@@ -101,6 +100,7 @@ const (
 	OpGetBlock OP = iota + 1
 	OpBlock
 	OpGetHeader
+	OpTx
 	OpHeader
 	OpGetState
 	OpState
@@ -128,6 +128,10 @@ type MsgState struct {
 	State State
 }
 
+type MsgTx struct {
+	Txs map[uint64]Transaction
+}
+
 type P2PMessage struct {
 	Op   OP
 	From memberlist.Address // 来自谁
@@ -135,12 +139,12 @@ type P2PMessage struct {
 }
 
 func (m *P2PMessage) Marshal() []byte {
-	data, _ := gob.Encode(m)
+	data, _ := json.Marshal(m)
 	return data
 }
 
 func (m *P2PMessage) Unmarshal(data []byte) error {
-	return gob.Decode(data, m)
+	return json.Unmarshal(data, m)
 }
 
 type Broadcast struct {
@@ -185,14 +189,9 @@ type P2PServer struct {
 	conf            *config.Config
 }
 
-func NewP2PServer() *P2PServer {
-	conf, err := config.Load()
-	if err != nil {
-		log.Fatal("load config failed")
-	}
-
+func NewP2PServer(conf *config.Config, chain *BlockChain) *P2PServer {
 	server := &P2PServer{
-		chain:           GetBlockChain(conf.DBPath),
+		chain:           chain,
 		local:           NewState(),
 		remote:          NewState(),
 		remoteHeartbeat: 0,
@@ -216,9 +215,9 @@ func (s *P2PServer) Run() {
 
 	go s.remoteHeartbeatTrigger()
 	go s.syncTrigger()
+	go s.shareTxTrigger()
 	if s.nodeType == Miner {
 		go s.mining()
-		// s.startMining <- struct{}{} // 启动挖矿
 	}
 
 	graceful.Stop(func() {
@@ -274,7 +273,7 @@ func (s *P2PServer) init(conf *config.Config) {
 		NumNodes: func() int {
 			alive := s.memberlist.NumMembers()
 			return alive
-		},                 // 集群中的节点数
+		}, // 集群中的节点数
 		RetransmitMult: 3, // 发送失败时的重试次数
 	}
 }
@@ -304,8 +303,10 @@ func (s *P2PServer) mining() {
 			ctx, cancel = context.WithCancel(context.Background())
 			go func() {
 				if s.chain.GetLatestBlock() == nil {
-					CreateBlockChainWithGenesisBlock(s.conf.DBPath, s.conf.Address)
+					log.Info("create blockchain with genesis block...")
+					s.chain.MineGenesisBlock(s.conf.Address)
 					cancel()
+					cancel = nil
 					return
 				}
 
@@ -342,7 +343,7 @@ func (s *P2PServer) remoteHeartbeatTrigger() {
 		case <-t.C:
 			// log.Debug("remote heartbeat: ", atomic.LoadInt32(&s.remoteHeartbeat))
 			if atomic.LoadInt32(&s.remoteHeartbeat) == 0 {
-				log.Debug("remote heartbeat timeout, begin reset remote state...")
+				// log.Debug("remote heartbeat timeout, begin reset remote state...")
 				s.remote.Set(0, false)
 				break
 			}
@@ -356,18 +357,14 @@ func (s *P2PServer) syncTrigger() {
 	ch := make(chan struct{}, 1)
 	go func() {
 		ticker := time.NewTicker(time.Millisecond * 100)
-		timer := time.NewTimer(time.Second)
+		timer := time.NewTimer(time.Second * 2)
 		for {
 			select {
 			case <-timer.C:
-				if s.local.HasGenisisBlock == true && s.nodeType == Miner {
-					// 延迟启动挖矿
-					s.startMining <- struct{}{}
-				}
+				ch <- struct{}{}
 			case <-ticker.C:
-				if s.remote.HasGenisisBlock == true {
+				if s.remote.HasGenesisBlock == true {
 					ch <- struct{}{}
-					return
 				}
 			}
 		}
@@ -381,9 +378,15 @@ func (s *P2PServer) syncTrigger() {
 			localState := s.local.Copy()
 			remoteState := s.remote.Copy()
 
-			if s.local.HasGenisisBlock {
+			if !localState.HasGenesisBlock && !remoteState.HasGenesisBlock {
+				s.startMining <- struct{}{}
+				break
+			}
+
+			if localState.HasGenesisBlock {
 				// 若是矿工，即使对方先挖出 SyncInterval 个块，没关系，我自继续挖，争取做最长链
-				if s.nodeType == Miner && localState.GetHeight()+s.conf.SyncInterval >= remoteState.GetHeight() {
+				if s.nodeType == Miner && (!remoteState.HasGenesisBlock ||
+					localState.GetHeight()+s.conf.SyncInterval >= remoteState.GetHeight()) {
 					// 矿工继续挖矿
 					s.startMining <- struct{}{}
 					ticker.Reset(time.Millisecond * 500)
@@ -421,14 +424,14 @@ func (s *P2PServer) syncTrigger() {
 					Start: start,
 					End:   end,
 				}
-				data, _ = gob.Encode(m)
+				data, _ = json.Marshal(m)
 			} else if s.nodeType == SPV {
 				op = OpGetHeader
 				m := &MsgGetHeader{
 					Start: start,
 					End:   end,
 				}
-				data, _ = gob.Encode(m)
+				data, _ = json.Marshal(m)
 			} else {
 				log.Fatal("illegal node type")
 			}
@@ -436,6 +439,60 @@ func (s *P2PServer) syncTrigger() {
 			err := s.SendToRandNode(&P2PMessage{
 				Op:   op,
 				From: s.FullAddress(),
+				Body: data,
+			})
+			if err != nil {
+				log.Errorf("send to rand node failed: %v", err)
+			}
+		}
+	}
+}
+
+func (s *P2PServer) shareTxTrigger() {
+	// 策略一：将交易放入交易池时触发回调
+	s.chain.txPool.SetPutCallback(func(fee uint64, tx *Transaction) {
+		log.Infof("add tx[%x] fee[%d] into pool success, begin gossip tx...", tx.Hash, fee)
+		msg := MsgTx{Txs: map[uint64]Transaction{fee: *tx}}
+		data, err := json.Marshal(&msg)
+		if err != nil {
+			log.Errorf("encode MsgTx failed: %v", err)
+			return
+		}
+		s.Gossip(&P2PMessage{
+			Op:   OpTx,
+			Body: data,
+		})
+	})
+
+	// 策略二：定时随机向某个节点分享前50个交易
+	const max = 50
+	ticker := time.NewTicker(time.Second * 4)
+	for {
+		select {
+		case <-ticker.C:
+			i := 0
+			txs := map[uint64]Transaction{}
+			s.chain.txPool.RandTraverse(func(fee uint64, tx *Transaction) bool {
+				txs[fee] = *tx
+				i++
+				if i == max {
+					return false
+				}
+				return true
+			})
+			if len(txs) == 0 {
+				break
+			}
+
+			msg := MsgTx{Txs: txs}
+			data, err := json.Marshal(&msg)
+			if err != nil {
+				log.Errorf("encode MsgTx failed: %v", err)
+				break
+			}
+			err = s.SendToRandNode(&P2PMessage{
+				Op:   OpTx,
+				From: s.LocalNode().FullAddress(),
 				Body: data,
 			})
 			if err != nil {
@@ -461,9 +518,20 @@ func (s *P2PServer) handleMessage(msg *P2PMessage) {
 		return
 	}
 
-	// log.Infof("got msg -> op:%d from:%s", msg.Op, msg.From.Addr)
+	// log.Infof("got msg -> op:%d from:%s", msg.Op, msg.Start.Addr)
 
 	switch msg.Op {
+	case OpTx:
+		{
+			var req MsgTx
+			if err := json.Unmarshal(msg.Body, &req); err != nil {
+				log.Errorf("gob decode failed: %v", err)
+				return
+			}
+			for _, tx := range req.Txs {
+				_ = s.chain.AddToTxPool(tx)
+			}
+		}
 	case OpGetBlock:
 		{
 			if s.chain.GetLatestBlock() == nil {
@@ -472,8 +540,7 @@ func (s *P2PServer) handleMessage(msg *P2PMessage) {
 			}
 
 			var req MsgGetBlock
-			err := gob.Decode(msg.Body, &req)
-			if err != nil {
+			if err := json.Unmarshal(msg.Body, &req); err != nil {
 				log.Errorf("gob decode failed: %v", err)
 				return
 			}
@@ -482,7 +549,9 @@ func (s *P2PServer) handleMessage(msg *P2PMessage) {
 			for height := req.Start; height <= req.End; height++ {
 				block, err := s.chain.GetBlock(height)
 				if err != nil {
-					log.Warnf("get block failed, height:%d err:%v", height, err)
+					if err.Error() != "invalid height" {
+						log.Warnf("get block failed, height:%d err:%v", height, err)
+					}
 					break
 				}
 				// log.Info("find block: ", block.Height)
@@ -491,7 +560,7 @@ func (s *P2PServer) handleMessage(msg *P2PMessage) {
 			if len(resp.Blocks) == 0 {
 				break
 			}
-			data, _ := gob.Encode(resp)
+			data, _ := json.Marshal(resp)
 			log.Infof("begin send blocks [start:%d] [end:%d]...", resp.Blocks[0].Height, resp.Blocks[len(resp.Blocks)-1].Height)
 
 			s.SendReliable(msg.From, &P2PMessage{
@@ -504,7 +573,7 @@ func (s *P2PServer) handleMessage(msg *P2PMessage) {
 	case OpBlock:
 		{
 			var req = MsgBlock{Blocks: make([]*Block, 0)}
-			err := gob.Decode(msg.Body, &req)
+			err := json.Unmarshal(msg.Body, &req)
 			if err != nil {
 				log.Errorf("gob decode failed: %v", err)
 				return
@@ -626,13 +695,13 @@ func (s *P2PServer) MergeRemoteState(data []byte, join bool) {
 
 	atomic.SwapInt32(&s.remoteHeartbeat, 15) // 满血心跳15s（系统设置的状态同步时间为10s）
 	if (state.GetHeight() < s.remote.GetHeight()) ||
-		(state.GetHeight() == s.remote.GetHeight() && s.remote.HasGenisisBlock) {
+		(state.GetHeight() == s.remote.GetHeight() && s.remote.HasGenesisBlock) {
 		return
 	}
 
-	s.remote.Set(state.GetHeight(), state.HasGenisisBlock)
+	s.remote.Set(state.GetHeight(), state.HasGenesisBlock)
 	log.Infof("update remote[height:%d state:%v], local[height:%d state:%v]",
-		s.remote.GetHeight(), s.remote.HasGenisisBlock, s.local.Height, s.local.HasGenisisBlock)
+		s.remote.GetHeight(), s.remote.HasGenesisBlock, s.local.Height, s.local.HasGenesisBlock)
 }
 
 func (s *P2PServer) NotifyJoin(node *memberlist.Node) {

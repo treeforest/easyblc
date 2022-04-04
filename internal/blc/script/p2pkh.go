@@ -4,21 +4,21 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"encoding/json"
 	"fmt"
 	"github.com/treeforest/easyblc/pkg/base58check"
-	"github.com/treeforest/easyblc/pkg/gob"
 	log "github.com/treeforest/logger"
 )
 
 func ParsePubKeyHashFromScriptSig(scriptSig []byte) ([]byte, error) {
 	var ops []Op
-	err := gob.Decode(scriptSig, &ops)
+	err := json.Unmarshal(scriptSig, &ops)
 	return ops[0].Data, err
 }
 
 func ParsePubKeyHashFromScriptPubKey(scriptPubKey []byte) ([]byte, error) {
 	var ops []Op
-	err := gob.Decode(scriptPubKey, &ops)
+	err := json.Unmarshal(scriptPubKey, &ops)
 	return ops[2].Data, err
 }
 
@@ -35,13 +35,13 @@ func GenerateScriptPubKey(address []byte) ([]byte, error) {
 		{Code: HASH160, Data: nil},
 		{Code: DUP, Data: nil}, // 栈顶
 	}
-	return gob.Encode(scriptPubKey)
+	return json.Marshal(scriptPubKey)
 }
 
 // IsValidScriptPubKey 是否是有效的交易输入脚本
 func IsValidScriptPubKey(scriptPubKey []byte) bool {
 	var ops []Op
-	err := gob.Decode(scriptPubKey, &ops)
+	err := json.Unmarshal(scriptPubKey, &ops)
 	if err != nil {
 		log.Debug("decode script pub key error:", err)
 		return false
@@ -87,13 +87,13 @@ func GenerateScriptSig(txHash [32]byte, key *ecdsa.PrivateKey) ([]byte, error) {
 		{Code: PUSH, Data: sig},
 	}
 
-	return gob.Encode(scriptSig)
+	return json.Marshal(scriptSig)
 }
 
 // IsValidScriptSig 是否是有效的交易输入脚本
 func IsValidScriptSig(scriptSig []byte) bool {
 	var ops []Op
-	err := gob.Decode(scriptSig, &ops)
+	err := json.Unmarshal(scriptSig, &ops)
 	if err != nil {
 		log.Debug("decode scriptsig failed:", err)
 		return false
@@ -114,8 +114,14 @@ func IsValidScriptSig(scriptSig []byte) bool {
 // Verify 验证输入脚本是否可消费输出脚本的金额
 func Verify(txHash [32]byte, input, output []byte) bool {
 	var in, out []Op
-	_ = gob.Decode(input, &in)
-	_ = gob.Decode(output, &out)
+	if err := json.Unmarshal(input, &in); err != nil {
+		log.Debug("unmarshal failed: ", err)
+		return false
+	}
+	if err := json.Unmarshal(output, &out); err != nil {
+		log.Debug("unmarshal failed: ", err)
+		return false
+	}
 	e := Engine{Ops: make([]Op, 0), TxHash: txHash[:]}
 	e.push(out)
 	e.push(in)

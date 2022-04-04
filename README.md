@@ -11,27 +11,71 @@ This is an easy blockchain implement with Go.
 - [x] UTXO
 - [x] pow/difficulty adjust
 - [x] transaction pool
-- [ ] P2P network
-- [ ] web server
-- [ ] SPV node
+- [x] P2P network
+- [x] web server
 - [ ] Bloom filter
 
 ## Usage
+
+### 启动区块链节点
+
+* 节点配置文件
+```yaml
+# 节点监听端口
+port: 3006
+
+# 0: 全节点 1: 矿工节点 2: SPV
+type: 0
+
+# 矿工地址
+address: 1QCZvtyk5YeqxXVuqDZNa9toxiP1icDW1f
+
+# 矿工使用,默认为0。标识间隔多少个区块的时候开始同步（矿工可以选择继续挖自己的分叉链，如果有几率追上最长链）
+syncinterval: 1
+
+# 区块链数据库存储位置
+dbpath: ../leveldb
+
+# 已存在的节点地址
+existing:
+  - 172.26.240.1:3007
+
+# http server 端口
+httpserverport: 5999
+```
+
+* 启动节点
+```bash
+cd cmd/node && go run main.go -conf config.yaml
+```
+
+### HTTP 客户端调用
+
+* 客户端命令
+
 ```
 Usage:
-        createblockchain -address ADDRESS -- 创建区块链
-                -address -- 接收创世区块奖励的地址
+        height -- 打印区块链高度
         printchain -- 输出区块链信息
         send -from FROM -to TO -amount AMOUNT -- 发起转账
-                -from FROM -- 转账源地址
-                -to TO -- 转账目标地址
-                -AMOUNT amount -- 转账金额
+                -from FROM -- 转账源地址,多个时采用,分割
+                -to TO -- 转账目标地址,多个时采用,分割
+                -amount AMOUNT -- 转账金额,多个时采用,分割
+                -fee FEE -- 支付的手续费
         createwallet -- 创建钱包
-        removewallet -- 删除钱包
-                -address ACCOUNT -- 钱包地址
+        removewallet -address ADDRESS -- 删除钱包
+                -address ADDRESS -- 钱包地址
         addresses -- 获取钱包地址列表
-        getbalance -- 获取钱包余额
+        allbalance -- 获取所有的余额    balance -address ADDRESS -- 获取钱包余额
+                -address ADDRESS -- 钱包地址
+        txpool -- 获取交易池内的交易信息
 ```
+
+* 转账示例
+```go
+cd cmd/client && go run main.go send -from "17Hth78RStKxzD3MCtwmTNJZpZMrro63S7,13dSQiFAuVUF8T461xDXFWmXMsv8c1w68E" -to "1N8qJzfCx8sA4NHKaVNCHp6S45cbbWvMEW" -amount 400000000 -fee 50000 
+```
+
 ## blockchain with two blocks
 ```
 blockchain:

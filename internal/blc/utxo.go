@@ -3,20 +3,20 @@ package blc
 import "sync"
 
 type UTXOSet struct {
-	utxoSet map[[32]byte]map[int]*TxOutput // TxHash => Index => TxOut
-	Size    int                            // UTXO 个数
+	utxoSet map[[32]byte]map[int]TxOutput // TxHash => Index => TxOut
+	Size    int                           // UTXO 个数
 	locker  sync.RWMutex
 }
 
 func NewUTXOSet() *UTXOSet {
 	return &UTXOSet{
-		utxoSet: map[[32]byte]map[int]*TxOutput{},
+		utxoSet: map[[32]byte]map[int]TxOutput{},
 		Size:    0,
 		locker:  sync.RWMutex{},
 	}
 }
 
-func (s *UTXOSet) Traverse(fn func(txHash [32]byte, index int, output *TxOutput)) {
+func (s *UTXOSet) Traverse(fn func(txHash [32]byte, index int, output TxOutput)) {
 	s.locker.RLock()
 	defer s.locker.RUnlock()
 
@@ -27,12 +27,12 @@ func (s *UTXOSet) Traverse(fn func(txHash [32]byte, index int, output *TxOutput)
 	}
 }
 
-func (s *UTXOSet) Put(txHash [32]byte, index int, output *TxOutput) {
+func (s *UTXOSet) Put(txHash [32]byte, index int, output TxOutput) {
 	s.locker.Lock()
 	defer s.locker.Unlock()
 
 	if _, ok := s.utxoSet[txHash]; !ok {
-		s.utxoSet[txHash] = make(map[int]*TxOutput)
+		s.utxoSet[txHash] = make(map[int]TxOutput)
 	}
 	s.utxoSet[txHash][index] = output
 	s.Size++
@@ -62,7 +62,7 @@ func (s *UTXOSet) Get(txHash [32]byte, index int) *TxOutput {
 	out := s.utxoSet[txHash][index]
 	s.locker.RUnlock()
 
-	return out
+	return &out
 }
 
 func (s *UTXOSet) Has(txHash [32]byte) bool {
@@ -136,7 +136,7 @@ func (chain *BlockChain) GetBalance(address string) uint64 {
 	utxoSet := chain.GetUTXOSet(address)
 
 	var amount uint64 = 0
-	utxoSet.Traverse(func(txHash [32]byte, index int, output *TxOutput) {
+	utxoSet.Traverse(func(txHash [32]byte, index int, output TxOutput) {
 		amount += output.Value
 	})
 
@@ -146,7 +146,7 @@ func (chain *BlockChain) GetBalance(address string) uint64 {
 // GetUTXOSet 获取UTXO集合
 func (chain *BlockChain) GetUTXOSet(address string) *UTXOSet {
 	utxoSet := NewUTXOSet()
-	chain.utxoSet.Traverse(func(txHash [32]byte, index int, output *TxOutput) {
+	chain.utxoSet.Traverse(func(txHash [32]byte, index int, output TxOutput) {
 		if output.Address == address {
 			utxoSet.Put(txHash, index, output)
 		}

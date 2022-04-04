@@ -4,8 +4,8 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
-	gob "github.com/treeforest/easyblc/pkg/gob"
 	"github.com/treeforest/easyblc/pkg/merkle"
 	log "github.com/treeforest/logger"
 	"strconv"
@@ -23,17 +23,17 @@ type Block struct {
 	Bits       uint32   // 当前工作量证明的复杂度
 	Nonce      uint64   // 挖矿找到的满足条件的值
 	// body
-	Transactions []*Transaction // 交易信息
-	MerkleTree   *merkle.Tree   // 默克尔树
+	Transactions []Transaction // 交易信息
+	MerkleTree   *merkle.Tree  // 默克尔树
 }
 
-func CreateGenesisBlock(txs []*Transaction) (*Block, bool) {
+func CreateGenesisBlock(txs []Transaction) (*Block, bool) {
 	return NewBlock(context.Background(), 0x1d00ffff, 0, [32]byte{}, txs)
 	//return NewBlock(context.Background(), 0x1e00ffff, 0, [32]byte{}, txs)
 }
 
 func NewBlock(ctx context.Context, bits uint32, height uint64,
-	preHash [32]byte, txs []*Transaction) (*Block, bool) {
+	preHash [32]byte, txs []Transaction) (*Block, bool) {
 
 	block := &Block{
 		Version:      1,
@@ -72,22 +72,22 @@ func (b *Block) Mining(ctx context.Context) bool {
 }
 
 func (b *Block) Marshal() ([]byte, error) {
-	return gob.Encode(b)
+	return json.Marshal(b)
 }
 
 func (b *Block) Unmarshal(data []byte) error {
-	return gob.Decode(data, b)
+	return json.Unmarshal(data, b)
 }
 
 func (b *Block) MarshalHeader() ([]byte, error) {
 	block := *b
 	block.Transactions = nil
 	block.MerkleTree = nil
-	return gob.Encode(&block)
+	return json.Marshal(&block)
 }
 
 func (b *Block) UnmarshalHeader(data []byte) error {
-	return gob.Decode(data, b)
+	return json.Unmarshal(data, b)
 }
 
 func (b *Block) MarshalHeaderWithoutNonceAndHash() []byte {

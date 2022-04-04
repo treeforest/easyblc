@@ -2,43 +2,47 @@ package blc
 
 import (
 	"errors"
+	"math/rand"
 	"sync"
+	"time"
 )
 
 // TxPool 交易池
 type TxPool struct {
-	mu    sync.Mutex                // rw
-	Fees  *UniquePriorityQueue      // sorted Fees,priority Queue
-	Cache map[uint64][]*TxPoolEntry // fee => txs
-	Cap   int                       // 最大容量
-	Size  int                       // 当前容量
+	mu          sync.Mutex                // rw
+	Fees        *UniquePriorityQueue      // sorted Fees,priority Queue
+	Cache       map[uint64][]*TxPoolEntry // fee => txs
+	Cap         int                       // 最大容量
+	Size        int                       // 当前容量
+	putCallback func(fee uint64, tx *Transaction)
 }
 
 type TxPoolEntry struct {
 	Fee uint64
-	Tx  *Transaction
+	Tx  Transaction
 }
 
 func NewTxPool() *TxPool {
 	pool := &TxPool{
-		Fees:  NewUniquePriorityQueue(),
-		Cache: map[uint64][]*TxPoolEntry{},
-		Cap:   4096,
-		Size:  0,
+		Fees:        NewUniquePriorityQueue(),
+		Cache:       map[uint64][]*TxPoolEntry{},
+		Cap:         4096,
+		Size:        0,
+		putCallback: nil,
 	}
 	return pool
 }
 
 // AddToTxPool 将交易放入内存池
-func (chain *BlockChain) AddToTxPool(tx *Transaction) error {
+func (chain *BlockChain) AddToTxPool(tx Transaction) error {
 	// 输出是否已经在交易池中被使用
 	for _, vin := range tx.Vins {
-		if chain.txPool.IsUsedTxInput(vin) {
+		if chain.txPool.IsUsedTxInput(&vin) {
 			return errors.New("tx input is used")
 		}
 	}
 	// 输入是否是有效的
-	fee, ok := chain.IsValidTx(tx)
+	fee, ok := chain.IsValidTx(&tx)
 	if !ok {
 		return errors.New("invalid transaction")
 	}
@@ -47,7 +51,7 @@ func (chain *BlockChain) AddToTxPool(tx *Transaction) error {
 }
 
 // ConsumeTxsFromTxPool 从交易池中获取交易
-func (chain *BlockChain) ConsumeTxsFromTxPool(count int) ([]*Transaction, uint64) {
+func (chain *BlockChain) ConsumeTxsFromTxPool(count int) ([]Transaction, uint64) {
 	if count <= 0 {
 		return nil, 0
 	}
@@ -56,7 +60,7 @@ func (chain *BlockChain) ConsumeTxsFromTxPool(count int) ([]*Transaction, uint64
 	}
 
 	minerFee := uint64(0)
-	txs := make([]*Transaction, 0)
+	txs := make([]Transaction, 0)
 
 	entries := chain.txPool.Get(count)
 	for _, entry := range entries {
@@ -81,13 +85,37 @@ func (chain *BlockChain) ConsumeTxsFromTxPool(count int) ([]*Transaction, uint64
 	return txs, minerFee
 }
 
-func (pool *TxPool) Traverse(fn func(fee uint64, tx *Transaction)) {
+func (pool *TxPool) SetPutCallback(fn func(fee uint64, tx *Transaction)) {
+	pool.putCallback = fn
+}
+
+func (pool *TxPool) Traverse(fn func(fee uint64, tx *Transaction) bool) {
 	fees := *pool.Fees
 	for !fees.Empty() {
 		fee := fees.Front()
 		fees.Pop()
 		for _, entry := range pool.Cache[fee] {
-			fn(fee, entry.Tx)
+			if false == fn(fee, &entry.Tx) {
+				return
+			}
+		}
+	}
+}
+
+// RandTraverse 随机遍历交易
+func (pool *TxPool) RandTraverse(fn func(fee uint64, tx *Transaction) bool) {
+	rand.Seed(time.Now().UnixNano())
+	for fee, entries := range pool.Cache { // map 随机
+		indexes := make([]int, len(entries))
+		for i := 0; i < len(entries); i++ {
+			indexes[i] = i
+		}
+		for len(indexes) > 0 { // 元素随机
+			i := rand.Intn(len(indexes))
+			if false == fn(fee, &entries[indexes[i]].Tx) {
+				return
+			}
+			indexes = append(indexes[:i], indexes[i+1:]...)
 		}
 	}
 }
@@ -95,19 +123,24 @@ func (pool *TxPool) Traverse(fn func(fee uint64, tx *Transaction)) {
 // IsUsedTxInput 是否为使用过的交易输入
 func (pool *TxPool) IsUsedTxInput(in *TxInput) bool {
 	used := false
-	pool.Traverse(func(fee uint64, tx *Transaction) {
+	pool.Traverse(func(fee uint64, tx *Transaction) bool {
 		for _, v := range tx.Vins {
 			if in.TxId == v.TxId {
 				used = true
-				return
+				return false
 			}
 		}
+		return true
 	})
 	return used
 }
 
 // Put 将交易存入交易池
 func (pool *TxPool) Put(fee uint64, entry *TxPoolEntry) {
+	if pool.putCallback != nil {
+		pool.putCallback(fee, &entry.Tx)
+	}
+
 	pool.mu.Lock()
 	defer pool.mu.Unlock()
 
