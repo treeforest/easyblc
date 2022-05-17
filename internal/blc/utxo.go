@@ -75,7 +75,7 @@ func (s *UTXOSet) Has(txHash [32]byte) bool {
 
 func (s *UTXOSet) Exist(txHash [32]byte, index int) bool {
 	s.locker.RLock()
-	s.locker.RUnlock()
+	defer s.locker.RUnlock()
 
 	if _, ok := s.utxoSet[txHash]; !ok {
 		return false

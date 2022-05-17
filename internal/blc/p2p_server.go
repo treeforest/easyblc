@@ -1,281 +1,294 @@
 package blc
 
 import (
+	"bytes"
 	"context"
-	"encoding/json"
-	"errors"
-	"github.com/hashicorp/memberlist"
-	"github.com/pborman/uuid"
+	"github.com/google/uuid"
 	"github.com/treeforest/easyblc/internal/blc/config"
+	"github.com/treeforest/easyblc/internal/blc/proto/p2p"
 	"github.com/treeforest/easyblc/pkg/graceful"
+	"github.com/treeforest/gossip"
 	log "github.com/treeforest/logger"
-	"math/rand"
-	"os"
 	"sync"
-	"sync/atomic"
 	"time"
 )
 
-func init() {
-	go func() {
-		t := time.NewTicker(time.Second * 10)
-		for {
-			select {
-			case <-t.C:
-				// 改变随机种子，增加安全性
-				rand.Seed(time.Now().UnixNano())
-				t.Reset(time.Second * time.Duration(rand.Int63n(10)))
-			}
-		}
-	}()
-}
-
-// State 节点在网络中的状态信息
-type State struct {
-	Height          uint64 // 节点高度
-	HasGenesisBlock bool   // 区块链状态，true：已有创世区块，false：无创世区块
-	rw              sync.RWMutex
-}
-
-func NewState() *State {
-	return &State{
-		Height:          0,
-		HasGenesisBlock: false,
-		rw:              sync.RWMutex{},
-	}
-}
-
-func (s *State) Marshal() []byte {
-	s.rw.RLock()
-	s.rw.RUnlock()
-	data, err := json.Marshal(s)
-	if err != nil {
-		log.Errorf("state marshal failed: %v", err)
-		return []byte{}
-	}
-	return data
-}
-
-func (s *State) Unmarshal(data []byte) error {
-	s.rw.Lock()
-	defer s.rw.Unlock()
-	return json.Unmarshal(data, s)
-}
-
-func (s *State) Copy() *State {
-	state := NewState()
-	s.rw.RLock()
-	state.Height = s.Height
-	state.HasGenesisBlock = s.HasGenesisBlock
-	s.rw.RUnlock()
-	return state
-}
-
-func (s *State) GetHeight() uint64 {
-	s.rw.RLock()
-	defer s.rw.RUnlock()
-	return s.Height
-}
-
-func (s *State) Set(height uint64, hasBlc bool) {
-	s.rw.Lock()
-	defer s.rw.Unlock()
-	s.Height = height
-	s.HasGenesisBlock = hasBlc
-}
-
-// NodeType 节点类型
-type NodeType uint32
-
 const (
-	Full  NodeType = iota // 全节点
-	Miner                 // 挖矿节点
-	SPV                   // 轻节点
+	// defPerGossipNum 每次广播的gossip消息数量
+	defPerGossipNum = 20
+	// defPerSummaryBlockHashCount 每次summary发送的区块哈希的数量
+	defPerSummaryBlockHashNum = 100
+	// defPerPullBlockNum 每次拉取的区块数量为20
+	defPerPullBlockNum = 50
 )
-
-// OP 网络请求操作码
-type OP uint32
-
-const (
-	OpGetBlock OP = iota + 1
-	OpBlock
-	OpGetHeader
-	OpTx
-	OpHeader
-	OpGetState
-	OpState
-)
-
-type MsgGetBlock struct {
-	Start uint64
-	End   uint64
-}
-
-type MsgBlock struct {
-	Blocks []*Block
-}
-
-type MsgGetHeader struct {
-	Start uint64
-	End   uint64
-}
-
-type MsgHeader struct {
-	Headers []*Block
-}
-
-type MsgState struct {
-	State State
-}
-
-type MsgTx struct {
-	Txs map[uint64]Transaction
-}
-
-type P2PMessage struct {
-	Op   OP
-	From memberlist.Address // 来自谁
-	Body []byte
-}
-
-func (m *P2PMessage) Marshal() []byte {
-	data, _ := json.Marshal(m)
-	return data
-}
-
-func (m *P2PMessage) Unmarshal(data []byte) error {
-	return json.Unmarshal(data, m)
-}
-
-type Broadcast struct {
-	memberlist.Broadcast
-	msg    []byte
-	notify chan struct{}
-}
-
-// Invalidates 检查当前发出的广播消息是否是无效的
-func (b *Broadcast) Invalidates(mb memberlist.Broadcast) bool {
-	// 始终有效
-	return false
-}
-
-// Message 广播真实发送的消息
-func (b *Broadcast) Message() []byte {
-	return b.msg
-}
-
-// Finished 关闭广播消息，可用于通知消息发送结束
-func (b *Broadcast) Finished() {
-	if b.notify != nil {
-		close(b.notify)
-	}
-}
 
 // P2PServer 点对点服务
 type P2PServer struct {
-	memberlist      *memberlist.Memberlist
-	broadcasts      *memberlist.TransmitLimitedQueue        // 广播队列
-	chain           *BlockChain                             // 区块链对象
-	local           *State                                  // 本地状态
-	remote          *State                                  // 远端状态
-	remoteHeartbeat int32                                   // 对远端状态的心跳检测
-	nodes           map[memberlist.Address]*memberlist.Node // 网络中的节点 地址->节点信息
-	metadata        map[string]string                       // 节点元数据
-	nodeType        NodeType                                // 节点类型
-	rewardAddress   string                                  // 挖矿奖励地址
-	startMining     chan struct{}                           // 开始挖矿
-	stopMining      chan struct{}                           // 停止挖矿
-	msgs            chan *P2PMessage                        // 消息通道
+	sync.RWMutex
+	gossipSrv       gossip.Gossip
+	Id              string
+	broadcasts      [][]byte          // 广播队列
+	chain           *BlockChain       // 区块链对象
+	metadata        map[string]string // 节点元数据
+	nodeType        p2p.NodeType      // 节点类型
+	rewardAddress   string            // 挖矿奖励地址
+	startMiningChan chan struct{}     // 开始挖矿
+	stopMiningChan  chan struct{}     // 停止挖矿
+	accept          chan *p2p.Message // 消息通道
 	conf            *config.Config
+	stop            chan struct{}
+	stopOnce        sync.Once
 }
 
 func NewP2PServer(conf *config.Config, chain *BlockChain) *P2PServer {
+	id := uuid.NewString()
+	gossipConf := gossip.DefaultConfig()
+	gossipConf.Id = id
+	gossipConf.Port = conf.Port
+	gossipConf.Endpoint = conf.Endpoint
+	gossipConf.BootstrapPeers = conf.BootstrapPeers
+
 	server := &P2PServer{
+		Id:              id,
+		gossipSrv:       gossip.New(gossipConf),
+		broadcasts:      make([][]byte, 1024),
 		chain:           chain,
-		local:           NewState(),
-		remote:          NewState(),
-		remoteHeartbeat: 0,
-		nodes:           map[memberlist.Address]*memberlist.Node{},
 		metadata:        map[string]string{},
-		nodeType:        NodeType(conf.Type),
-		rewardAddress:   conf.Address,
-		startMining:     make(chan struct{}, 1),
-		stopMining:      make(chan struct{}, 1),
-		msgs:            make(chan *P2PMessage, 512),
+		nodeType:        p2p.NodeType(conf.Type),
+		rewardAddress:   conf.RewardAddress,
+		startMiningChan: make(chan struct{}, 1),
+		stopMiningChan:  make(chan struct{}, 1),
+		accept:          make(chan *p2p.Message, 256),
 		conf:            conf,
+		stop:            make(chan struct{}, 1),
 	}
 
-	server.init(conf)
+	server.chain.GetTxPool().SetPutCallback(server.gossipNewTransaction)
+
 	return server
 }
 
 func (s *P2PServer) Run() {
-	go s.dispatchMessage(context.Background())
+	go s.dispatch()
 	time.Sleep(time.Millisecond * 100)
 
-	go s.remoteHeartbeatTrigger()
-	go s.syncTrigger()
-	go s.shareTxTrigger()
-	if s.nodeType == Miner {
+	if s.nodeType == p2p.NodeType_Miner {
 		go s.mining()
+		s.startMining()
 	}
 
 	graceful.Stop(func() {
 		log.Info("graceful stopping...")
-		s.Close()
+		s.Stop()
 	})
 }
 
-func (s *P2PServer) Close() {
-	if s.nodeType == Miner {
-		s.stopMining <- struct{}{}
-	}
-	err := s.memberlist.Shutdown()
-	if err != nil {
-		log.Fatal("network shutdown error:", err)
-	}
-	s.chain.Close()
+func (s *P2PServer) Stop() {
+	s.stopOnce.Do(func() {
+		if s.nodeType == p2p.NodeType_Miner {
+			s.stopMiningChan <- struct{}{}
+		}
+		close(s.stop)
+		s.gossipSrv.Stop()
+		s.chain.Close()
+	})
 }
 
-func (s *P2PServer) init(conf *config.Config) {
-	hostname, _ := os.Hostname()
-	c := memberlist.DefaultLANConfig()
-	c.UDPBufferSize = 2000
-	c.PushPullInterval = time.Second * 10 // 状态同步间隔时间
-	c.Events = s
-	c.Delegate = s
-	c.BindPort = conf.Port // 端口
-	c.Name = hostname + "-" + uuid.NewUUID().String()
+// NotifyMsg 处理用户数据
+// 参数：
+// 		msg: 用户数据
+func (s *P2PServer) NotifyMsg(data []byte) {
+	if data == nil || len(data) == 0 {
+		return
+	}
+	msg := &p2p.Message{}
+	if err := msg.Unmarshal(data); err != nil {
+		log.Errorf("NotifyMsg unmarshal p2pMessage failed: %v", err)
+		return
+	}
+	s.accept <- msg
+}
 
-	m, err := memberlist.Create(c)
-	if err != nil {
-		log.Fatal("memberlist create failed:", err)
+// GetBroadcasts 返回需要进行gossip广播的数据。
+// 返回值：
+// 	   data: 待广播的消息
+func (s *P2PServer) GetBroadcasts() (data [][]byte) {
+	var broadcasts [][]byte
+	s.Lock()
+	if len(s.broadcasts) > defPerGossipNum {
+		broadcasts = s.broadcasts[:defPerGossipNum]
+		s.broadcasts = s.broadcasts[defPerGossipNum:]
+	} else {
+		broadcasts = s.broadcasts
+		s.broadcasts = [][]byte{}
+	}
+	s.Unlock()
+	return broadcasts
+}
+
+// Summary 返回 pull 请求时所携带的信息。
+// 返回值：
+//     data: pull请求信息
+func (s *P2PServer) Summary() (data []byte) {
+	// 获取当前交易池中所有交易的hash
+	hashes := s.chain.GetTxPool().TxHashes()
+	mp := make(map[string]p2p.Empty, len(hashes))
+	for _, hash := range hashes {
+		mp[string(hash)] = p2p.Empty{}
 	}
 
-	if s.chain.GetLatestBlock() != nil {
-		s.local.Set(s.chain.GetLatestBlock().Height, true)
-		log.Info("local height: ", s.local.GetHeight())
-	}
-
-	if len(conf.Existing) != 0 {
-		// 加入当前区块链网络
-		existing := conf.Existing
-		_, err = m.Join(existing)
-		if err != nil {
-			log.Errorf("join blockchain network failed, existing:%v err:%v", existing, err)
-		} else {
-			log.Info("join blockchain network success")
+	// 获取最新100个区块的哈希
+	blockStart := uint64(0)
+	blockHashes := make([][]byte, 0)
+	lastBlock := s.chain.GetLatestBlock()
+	if lastBlock != nil {
+		if lastBlock.Height >= defPerSummaryBlockHashNum {
+			blockStart = lastBlock.Height - defPerSummaryBlockHashNum
+		}
+		for height := blockStart; height < lastBlock.Height; height++ {
+			block, err := s.chain.GetBlock(height)
+			if err != nil {
+				break
+			}
+			blockHashes = append(blockHashes, block.Hash[:])
 		}
 	}
 
-	s.memberlist = m
-	s.broadcasts = &memberlist.TransmitLimitedQueue{
-		NumNodes: func() int {
-			alive := s.memberlist.NumMembers()
-			return alive
-		}, // 集群中的节点数
-		RetransmitMult: 3, // 发送失败时的重试次数
+	msg := &p2p.Message{
+		SrcId: s.Id,
+		Content: &p2p.Message_PullReq{
+			PullReq: &p2p.PullRequest{
+				BlockStart:  blockStart,
+				BlockHashes: blockHashes,
+				TxHashes:    mp,
+			},
+		},
 	}
+	data, _ = msg.Marshal()
+	return data
+}
+
+// LocalState 返回相关的本地状态信息。
+// 参数：
+//     summary: 远程节点的 pull 请求信息
+// 返回值：
+//     state: 状态数据
+func (s *P2PServer) LocalState(data []byte) (state []byte) {
+	msg := &p2p.Message{}
+	if err := msg.Unmarshal(data); err != nil {
+		log.Errorf("unmarshal pull request message failed: %v", err)
+		return []byte{}
+	}
+
+	blocks := make([][]byte, 0)
+	txs := make([][]byte, 0)
+	req := msg.GetPullReq()
+
+	// 获取远程节点没有的区块
+	lastBlock := s.chain.GetLatestBlock()
+	if lastBlock != nil {
+		start := req.BlockStart + uint64(len(req.BlockHashes))
+		height := req.BlockStart
+		i := 0
+		for height <= lastBlock.Height && i < len(req.BlockHashes) {
+			block, err := s.chain.GetBlock(height)
+			if err != nil {
+				break
+			}
+			if !bytes.Equal(block.Hash[:], req.BlockHashes[i]) {
+				// 高度为height的区块不相同，那么将之后的区块同步给远程节点
+				start = height
+				break
+			}
+			height++
+			i++
+		}
+		num := defPerPullBlockNum
+		for ; start <= lastBlock.Height; start++ {
+			if num <= 0 {
+				break
+			}
+			num--
+			block, err := s.chain.GetBlock(height)
+			if err != nil {
+				break
+			}
+			blocks = append(blocks, block.Hash[:])
+		}
+	}
+
+	// 获取远程节点没有的交易
+	txHashes := req.TxHashes
+	s.chain.GetTxPool().Traverse(func(_ uint64, tx *Transaction) bool {
+		if _, ok := txHashes[string(tx.Hash[:])]; !ok {
+			b, _ := tx.Marshal()
+			txs = append(txs, b)
+		}
+		return true
+	})
+
+	msg = &p2p.Message{
+		SrcId: s.Id,
+		Content: &p2p.Message_PullResp{
+			PullResp: &p2p.PullResponse{
+				Blocks: blocks,
+				Txs:    txs,
+			},
+		},
+	}
+	state, _ = msg.Marshal()
+	return state
+}
+
+// MergeRemoteState 合并远程节点返回的状态信息。
+// 参数：
+//     state: 远程节点返回的状态信息
+func (s *P2PServer) MergeRemoteState(data []byte) {
+	msg := &p2p.Message{}
+	if err := msg.Unmarshal(data); err != nil {
+		log.Warnf("unmarshal message failed: %v", err)
+		return
+	}
+	resp := msg.GetPullResp()
+
+	// 同步区块
+	for _, blockData := range resp.Blocks {
+		block := Block{}
+		if err := block.Unmarshal(blockData); err != nil {
+			log.Warnf("unmarshal block failed: %v", err)
+			break
+		}
+		// 注意：这里不一定就是最新的区块，可能是之前的区块
+		if ok := s.chain.VerifyBlock(&block); !ok {
+			log.Debugf("verify block failed: %v", err)
+		}
+
+		if err := s.chain.AddBlock(&block); err != nil {
+			log.Warnf("add block failed: %v", err)
+			break
+		}
+	}
+
+	// 同步交易
+	for _, txData := range resp.Txs {
+		tx := Transaction{}
+		if err := tx.Unmarshal(txData); err != nil {
+			log.Warnf("unmarshal transaction failed: %v", err)
+			break
+		}
+		if err := s.chain.AddToTxPool(tx); err != nil {
+			log.Warnf("add to tx pool failed: %v", err)
+			break
+		}
+	}
+}
+
+func (s *P2PServer) startMining() {
+	s.startMiningChan <- struct{}{}
+}
+
+func (s *P2PServer) stopMining() {
+	s.stopMiningChan <- struct{}{}
 }
 
 // mining 挖矿
@@ -287,13 +300,13 @@ func (s *P2PServer) mining() {
 
 	for {
 		select {
-		case <-s.stopMining:
+		case <-s.stopMiningChan:
 			if cancel != nil {
 				log.Debug("cancel mining...")
 				cancel()
 				cancel = nil
 			}
-		case <-s.startMining:
+		case <-s.startMiningChan:
 			if cancel != nil {
 				// 已经在挖矿
 				break
@@ -304,7 +317,7 @@ func (s *P2PServer) mining() {
 			go func() {
 				if s.chain.GetLatestBlock() == nil {
 					log.Info("create blockchain with genesis block...")
-					s.chain.MineGenesisBlock(s.conf.Address)
+					s.chain.MineGenesisBlock(s.rewardAddress)
 					cancel()
 					cancel = nil
 					return
@@ -317,448 +330,71 @@ func (s *P2PServer) mining() {
 						return
 					}
 
-					t := time.NewTicker(time.Millisecond * 100)
 					select {
 					case <-ctx.Done():
 						log.Debug("cancel mining...")
 						// 取消挖矿
 						return
-					case <-t.C:
+					default:
 					}
 
 					log.Info("mining block success, height: ", s.chain.GetLatestBlock().Height)
-					// 挖到区块,更新本地状态
-					s.local.Set(s.chain.GetLatestBlock().Height, true)
 				}
 			}()
 		}
 	}
 }
 
-// remoteHeartbeatTrigger 心跳触发器
-func (s *P2PServer) remoteHeartbeatTrigger() {
-	t := time.NewTicker(time.Second * 1)
-	for {
-		select {
-		case <-t.C:
-			// log.Debug("remote heartbeat: ", atomic.LoadInt32(&s.remoteHeartbeat))
-			if atomic.LoadInt32(&s.remoteHeartbeat) == 0 {
-				// log.Debug("remote heartbeat timeout, begin reset remote state...")
-				s.remote.Set(0, false)
-				break
-			}
-			atomic.AddInt32(&s.remoteHeartbeat, -1) // 心跳减一
-		}
+func (s *P2PServer) gossipNewTransaction(fee uint64, tx *Transaction) {
+	txData, _ := tx.Marshal()
+	msg := &p2p.Message{
+		SrcId: s.Id,
+		Content: &p2p.Message_NewTx{
+			NewTx: &p2p.Transaction{
+				Fee:  fee,
+				Data: txData,
+			},
+		},
 	}
+	s.gossip(msg)
 }
 
-// syncTrigger 同步触发器，用于同步区块，并控制挖矿的启动与暂停
-func (s *P2PServer) syncTrigger() {
-	ch := make(chan struct{}, 1)
-	go func() {
-		ticker := time.NewTicker(time.Millisecond * 100)
-		timer := time.NewTimer(time.Second * 2)
-		for {
-			select {
-			case <-timer.C:
-				ch <- struct{}{}
-			case <-ticker.C:
-				if s.remote.HasGenesisBlock == true {
-					ch <- struct{}{}
-				}
-			}
-		}
-	}()
-	<-ch
-
-	ticker := time.NewTicker(time.Millisecond * 500)
-	for {
-		select {
-		case <-ticker.C:
-			localState := s.local.Copy()
-			remoteState := s.remote.Copy()
-
-			if !localState.HasGenesisBlock && !remoteState.HasGenesisBlock {
-				s.startMining <- struct{}{}
-				break
-			}
-
-			if localState.HasGenesisBlock {
-				// 若是矿工，即使对方先挖出 SyncInterval 个块，没关系，我自继续挖，争取做最长链
-				if s.nodeType == Miner && (!remoteState.HasGenesisBlock ||
-					localState.GetHeight()+s.conf.SyncInterval >= remoteState.GetHeight()) {
-					// 矿工继续挖矿
-					s.startMining <- struct{}{}
-					ticker.Reset(time.Millisecond * 500)
-					break
-				}
-				if localState.GetHeight() >= remoteState.GetHeight() {
-					ticker.Reset(time.Millisecond * 500)
-					break
-				}
-			}
-
-			ticker.Reset(time.Millisecond * 300)
-			if s.nodeType == Miner {
-				// 取消挖矿，当同步了最新区块后再重新启动挖矿
-				s.stopMining <- struct{}{}
-			}
-
-			// 判断需要同步的区块区间
-			var start, end uint64 = 0, remoteState.GetHeight()
-			if localState.GetHeight() > 100 {
-				start = localState.GetHeight() - 100
-			}
-			const maxCount = 3000 // 一次同步区块的最大数量
-			if end-start > maxCount {
-				end = start + maxCount
-			}
-
-			var (
-				data []byte
-				op   OP
-			)
-			if s.nodeType == Miner || s.nodeType == Full {
-				op = OpGetBlock
-				m := MsgGetBlock{
-					Start: start,
-					End:   end,
-				}
-				data, _ = json.Marshal(m)
-			} else if s.nodeType == SPV {
-				op = OpGetHeader
-				m := &MsgGetHeader{
-					Start: start,
-					End:   end,
-				}
-				data, _ = json.Marshal(m)
-			} else {
-				log.Fatal("illegal node type")
-			}
-
-			err := s.SendToRandNode(&P2PMessage{
-				Op:   op,
-				From: s.FullAddress(),
-				Body: data,
-			})
-			if err != nil {
-				log.Errorf("send to rand node failed: %v", err)
-			}
-		}
+func (s *P2PServer) gossip(msg *p2p.Message) {
+	data, _ := msg.Marshal()
+	s.Lock()
+	if s.broadcasts == nil {
+		s.broadcasts = make([][]byte, 0)
 	}
+	s.broadcasts = append(s.broadcasts, data)
+	s.Unlock()
 }
 
-func (s *P2PServer) shareTxTrigger() {
-	// 策略一：将交易放入交易池时触发回调
-	s.chain.txPool.SetPutCallback(func(fee uint64, tx *Transaction) {
-		log.Infof("add tx[%x] fee[%d] into pool success, begin gossip tx...", tx.Hash, fee)
-		msg := MsgTx{Txs: map[uint64]Transaction{fee: *tx}}
-		data, err := json.Marshal(&msg)
-		if err != nil {
-			log.Errorf("encode MsgTx failed: %v", err)
-			return
-		}
-		s.Gossip(&P2PMessage{
-			Op:   OpTx,
-			Body: data,
-		})
-	})
-
-	// 策略二：定时随机向某个节点分享前50个交易
-	const max = 50
-	ticker := time.NewTicker(time.Second * 4)
+func (s *P2PServer) dispatch() {
 	for {
 		select {
-		case <-ticker.C:
-			i := 0
-			txs := map[uint64]Transaction{}
-			s.chain.txPool.RandTraverse(func(fee uint64, tx *Transaction) bool {
-				txs[fee] = *tx
-				i++
-				if i == max {
-					return false
-				}
-				return true
-			})
-			if len(txs) == 0 {
-				break
-			}
-
-			msg := MsgTx{Txs: txs}
-			data, err := json.Marshal(&msg)
-			if err != nil {
-				log.Errorf("encode MsgTx failed: %v", err)
-				break
-			}
-			err = s.SendToRandNode(&P2PMessage{
-				Op:   OpTx,
-				From: s.LocalNode().FullAddress(),
-				Body: data,
-			})
-			if err != nil {
-				log.Errorf("send to rand node failed: %v", err)
-			}
-		}
-	}
-}
-
-func (s *P2PServer) dispatchMessage(ctx context.Context) {
-	for {
-		select {
-		case msg := <-s.msgs:
+		case msg := <-s.accept:
 			s.handleMessage(msg)
-		case <-ctx.Done():
+		case <-s.stop:
 			return
 		}
 	}
 }
 
-func (s *P2PServer) handleMessage(msg *P2PMessage) {
-	if msg.From.Addr == s.FullAddress().Addr {
-		return
-	}
-
-	// log.Infof("got msg -> op:%d from:%s", msg.Op, msg.Start.Addr)
-
-	switch msg.Op {
-	case OpTx:
-		{
-			var req MsgTx
-			if err := json.Unmarshal(msg.Body, &req); err != nil {
-				log.Errorf("gob decode failed: %v", err)
-				return
-			}
-			for _, tx := range req.Txs {
-				_ = s.chain.AddToTxPool(tx)
-			}
+func (s *P2PServer) handleMessage(msg *p2p.Message) {
+	switch msg.Content.(type) {
+	case *p2p.Message_NewTx:
+		tx := Transaction{}
+		if err := tx.Unmarshal(msg.GetNewTx().Data); err != nil {
+			log.Warn(err)
+			return
 		}
-	case OpGetBlock:
-		{
-			if s.chain.GetLatestBlock() == nil {
-				log.Debug("latest block is nil")
-				return
-			}
-
-			var req MsgGetBlock
-			if err := json.Unmarshal(msg.Body, &req); err != nil {
-				log.Errorf("gob decode failed: %v", err)
-				return
-			}
-
-			resp := MsgBlock{Blocks: make([]*Block, 0)}
-			for height := req.Start; height <= req.End; height++ {
-				block, err := s.chain.GetBlock(height)
-				if err != nil {
-					if err.Error() != "invalid height" {
-						log.Warnf("get block failed, height:%d err:%v", height, err)
-					}
-					break
-				}
-				// log.Info("find block: ", block.Height)
-				resp.Blocks = append(resp.Blocks, block)
-			}
-			if len(resp.Blocks) == 0 {
-				break
-			}
-			data, _ := json.Marshal(resp)
-			log.Infof("begin send blocks [start:%d] [end:%d]...", resp.Blocks[0].Height, resp.Blocks[len(resp.Blocks)-1].Height)
-
-			s.SendReliable(msg.From, &P2PMessage{
-				Op:   OpBlock,
-				From: s.FullAddress(),
-				Body: data,
-			})
+		_ = s.chain.AddToTxPool(tx)
+	case *p2p.Message_NewBlock:
+		block := Block{}
+		if err := block.Unmarshal(msg.GetNewBlock().Payload); err != nil {
+			log.Warn(err)
+			return
 		}
-
-	case OpBlock:
-		{
-			var req = MsgBlock{Blocks: make([]*Block, 0)}
-			err := json.Unmarshal(msg.Body, &req)
-			if err != nil {
-				log.Errorf("gob decode failed: %v", err)
-				return
-			}
-
-			log.Debug("receive blocks, len=", len(req.Blocks))
-			isSync := false
-			for _, block := range req.Blocks {
-				//log.Debug(block.Height, s.local.GetHeight())
-				if block.Height > s.local.GetHeight()+1 {
-					return
-				}
-				// must update
-				b, _ := s.chain.GetBlock(block.Height)
-				if b != nil {
-					if block.Hash == b.Hash {
-						//log.Debug("same hash -> height:", block.Height)
-						continue
-					}
-					err = s.chain.RemoveBlockFrom(block.Height)
-					if err != nil {
-						log.Errorf("remove block from %d failed: %v", block.Height, err)
-						break
-					}
-					//log.Debug("remove block from: ", block.Height)
-					if block.PreHash != b.PreHash {
-						return
-					}
-				}
-
-				//log.Warn(block.Height)
-				if err = s.chain.AddBlock(block); err != nil {
-					log.Warnf("add block error: %v", err)
-					return
-				}
-				s.local.Set(block.Height, true)
-				log.Infof("sync block, height: %d", block.Height)
-				isSync = true
-			}
-
-			if !isSync {
-				// 没有同步区块
-				return
-			}
-
-			log.Debug("sync end, local height:", s.local.Height)
-		}
-
-	default:
-
+		_ = s.chain.AddBlock(&block)
 	}
-}
-
-// NodeMeta 节点元数据，元数据若是发生改变，则会广播至网络
-func (s *P2PServer) NodeMeta(limit int) []byte {
-	meta, _ := json.Marshal(s.metadata)
-	if len(meta) > limit {
-		log.Warn("metadata length is over limit")
-	}
-	return meta
-}
-
-// NotifyMsg gossip 消息的回调
-func (s *P2PServer) NotifyMsg(data []byte) {
-	if len(data) == 0 {
-		log.Warn("invalid message")
-		return
-	}
-
-	var msg P2PMessage
-	if err := msg.Unmarshal(data); err != nil {
-		log.Errorf("NotifyMsg unmarshal p2pMessage failed: %v", err)
-		return
-	}
-
-	s.msgs <- &msg
-}
-
-// GetBroadcasts 当gossip定时事件触发，将回调该函数.注意：！！！最多只能发送limit-overhead的字节，
-// 数据过多将自动丢弃数据
-func (s *P2PServer) GetBroadcasts(overhead, limit int) [][]byte {
-	var gossipMsg [][]byte
-	defer func() {
-		if err := recover(); err != nil {
-			// memberlist 原生队列bug，会导致panic，目前还没找到问题在哪
-			log.Error(err)
-			gossipMsg = [][]byte{}
-		}
-	}()
-	gossipMsg = s.broadcasts.GetBroadcasts(overhead, limit)
-	need := 0
-	for i := 0; i < len(gossipMsg); i++ {
-		need += len(gossipMsg[i])
-	}
-	if need != 0 {
-		log.Debugf("overhead:%d limit:%d have:%d need:%d", overhead, limit, limit-overhead, need)
-	}
-	return gossipMsg
-}
-
-// LocalState 本地状态回调，当加入网络的时候，远端节点需要获取当前节点状态时调用；
-// 之后远端节点通过定时操作，需要同步状态的时候会发起网络请求，将会回调该函数。
-// 参数：
-// 		join: 是否为刚加入网络，true:是， false：否
-func (s *P2PServer) LocalState(join bool) []byte {
-	return s.local.Copy().Marshal()
-}
-
-// MergeRemoteState 更新状态
-func (s *P2PServer) MergeRemoteState(data []byte, join bool) {
-	if len(data) == 0 {
-		return
-	}
-
-	state := NewState()
-	if err := state.Unmarshal(data); err != nil {
-		log.Fatal("unmarshal remote failed: ", err)
-	}
-
-	atomic.SwapInt32(&s.remoteHeartbeat, 15) // 满血心跳15s（系统设置的状态同步时间为10s）
-	if (state.GetHeight() < s.remote.GetHeight()) ||
-		(state.GetHeight() == s.remote.GetHeight() && s.remote.HasGenesisBlock) {
-		return
-	}
-
-	s.remote.Set(state.GetHeight(), state.HasGenesisBlock)
-	log.Infof("update remote[height:%d state:%v], local[height:%d state:%v]",
-		s.remote.GetHeight(), s.remote.HasGenesisBlock, s.local.Height, s.local.HasGenesisBlock)
-}
-
-func (s *P2PServer) NotifyJoin(node *memberlist.Node) {
-	log.Debug("node join: ", node.Address())
-	s.nodes[node.FullAddress()] = node
-}
-
-func (s *P2PServer) NotifyLeave(node *memberlist.Node) {
-	log.Debug("node leave: ", node.Address())
-	delete(s.nodes, node.FullAddress())
-}
-
-// NotifyUpdate 节点更新，通常会因为节点元数据的更新而回调该函数
-func (s *P2PServer) NotifyUpdate(node *memberlist.Node) {
-	log.Debug("node update: ", node.Address())
-	s.nodes[node.FullAddress()] = node
-}
-
-func (s *P2PServer) SendToRandNode(msg *P2PMessage) error {
-	num := len(s.nodes)
-	if num == 0 {
-		return errors.New("not found")
-	}
-	var node *memberlist.Node
-	for _, n := range s.nodes {
-		node = n
-		break
-	}
-	log.Debug("send to ", node.Address())
-	return s.memberlist.SendReliable(node, msg.Marshal())
-}
-
-func (s *P2PServer) SendReliable(to memberlist.Address, msg *P2PMessage) {
-	node, ok := s.nodes[to]
-	if !ok {
-		log.Warnf("not found node with address %s", to.String())
-		return
-	}
-	err := s.memberlist.SendReliable(node, msg.Marshal())
-	if err != nil {
-		log.Errorf("send to address[%v] failed:%v", to.String(), err)
-	}
-}
-
-// Gossip gossip 广播消息,紧紧用于广播最新区块
-func (s *P2PServer) Gossip(msg *P2PMessage) {
-	log.Debugf("gossip op:%v msglen:%d", msg.Op, len(msg.Marshal()))
-	s.broadcasts.QueueBroadcast(&Broadcast{
-		msg:    msg.Marshal(),
-		notify: nil,
-	})
-}
-
-func (s *P2PServer) LocalNode() *memberlist.Node {
-	return s.memberlist.LocalNode()
-}
-
-func (s *P2PServer) FullAddress() memberlist.Address {
-	return s.LocalNode().FullAddress()
 }

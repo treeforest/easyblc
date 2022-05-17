@@ -17,13 +17,14 @@ func init() {
 }
 
 type Config struct {
-	Port           int      `yaml:"port"`           // 节点端口
+	Port           int      `yaml:"port"`           // gRPC监听端口
+	Endpoint       string   `yaml:"endpoint"`       // 节点对外暴露的gRPC地址
 	Type           uint32   `yaml:"type"`           // 节点类型
 	DBPath         string   `yaml:"dbpath"`         // 区块链数据库路径
-	Existing       []string `yaml:"existing"`       // 现有区块链节点地址
-	Address        string   `yaml:"address"`        // 获取挖矿奖励的地址
-	SyncInterval   uint64   `yaml:"syncinterval"`   // 同步间隔
-	HttpServerPort int      `yaml:"httpserverport"` //
+	BootstrapPeers []string `yaml:"bootstrapPeers"` // 启动时连接的区块链节点地址
+	RewardAddress  string   `yaml:"rewardAddress"`  // 获取挖矿奖励的地址
+	SyncInterval   uint64   `yaml:"syncInterval"`   // 同步间隔
+	HttpServerPort int      `yaml:"httpServerPort"` // web监听端口
 }
 
 func Load() (*Config, error) {

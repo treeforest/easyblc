@@ -1,0 +1,51 @@
+syntax = "proto3";
+
+option go_package = ".;p2p";
+
+// gogo proto
+import "gogoproto/gogo.proto";
+option (gogoproto.gostring_all) = true;
+option (gogoproto.equal_all) = true;
+option (gogoproto.verbose_equal_all) = true;
+option (gogoproto.marshaler_all) = true;
+option (gogoproto.sizer_all) = true;
+option (gogoproto.unmarshaler_all) = true;
+option (gogoproto.goproto_getters_all) = false;
+
+enum NodeType {
+  Full = 0;
+  Miner = 1;
+  SPV = 2;
+}
+
+message Message {
+  string src_id = 1;
+  oneof content {
+    PullRequest pull_req = 2;
+    PullResponse pull_resp = 3;
+    Transaction new_tx = 4;
+    Envelope new_block = 5;
+  }
+}
+
+message PullRequest {
+  uint64 block_start = 1;
+  repeated bytes block_hashes = 2;
+  map<string, Empty> tx_hashes = 3[(gogoproto.nullable) = false];
+}
+
+message PullResponse {
+  repeated bytes blocks = 1;
+  repeated bytes txs = 2;
+}
+
+message Transaction {
+  uint64 fee = 1;
+  bytes data = 2;
+}
+
+message Envelope {
+  bytes payload = 1;
+}
+
+message Empty{}

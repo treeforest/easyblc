@@ -7,9 +7,13 @@ import (
 	"time"
 )
 
+const (
+	defTxPoolCap = 10000
+)
+
 // TxPool 交易池
 type TxPool struct {
-	mu          sync.Mutex                // rw
+	locker      sync.RWMutex
 	Fees        *UniquePriorityQueue      // sorted Fees,priority Queue
 	Cache       map[uint64][]*TxPoolEntry // fee => txs
 	Cap         int                       // 最大容量
@@ -26,7 +30,7 @@ func NewTxPool() *TxPool {
 	pool := &TxPool{
 		Fees:        NewUniquePriorityQueue(),
 		Cache:       map[uint64][]*TxPoolEntry{},
-		Cap:         4096,
+		Cap:         defTxPoolCap,
 		Size:        0,
 		putCallback: nil,
 	}
@@ -86,10 +90,16 @@ func (chain *BlockChain) ConsumeTxsFromTxPool(count int) ([]Transaction, uint64)
 }
 
 func (pool *TxPool) SetPutCallback(fn func(fee uint64, tx *Transaction)) {
+	pool.locker.Lock()
+	defer pool.locker.Unlock()
+
 	pool.putCallback = fn
 }
 
 func (pool *TxPool) Traverse(fn func(fee uint64, tx *Transaction) bool) {
+	pool.locker.RLock()
+	defer pool.locker.RUnlock()
+
 	fees := *pool.Fees
 	for !fees.Empty() {
 		fee := fees.Front()
@@ -102,16 +112,33 @@ func (pool *TxPool) Traverse(fn func(fee uint64, tx *Transaction) bool) {
 	}
 }
 
+func (pool *TxPool) TxHashes() [][]byte {
+	pool.locker.RLock()
+	defer pool.locker.RUnlock()
+
+	txHashes := make([][]byte, 0, pool.Fees.Size()+1)
+	for _, entries := range pool.Cache {
+		for _, entry := range entries {
+			txHashes = append(txHashes, entry.Tx.Hash[:])
+		}
+	}
+	return txHashes
+}
+
 // RandTraverse 随机遍历交易
 func (pool *TxPool) RandTraverse(fn func(fee uint64, tx *Transaction) bool) {
-	rand.Seed(time.Now().UnixNano())
+	rd := rand.New(rand.NewSource(time.Now().UnixNano()))
+
+	pool.locker.RLock()
+	defer pool.locker.RUnlock()
+
 	for fee, entries := range pool.Cache { // map 随机
 		indexes := make([]int, len(entries))
 		for i := 0; i < len(entries); i++ {
 			indexes[i] = i
 		}
 		for len(indexes) > 0 { // 元素随机
-			i := rand.Intn(len(indexes))
+			i := rd.Intn(len(indexes))
 			if false == fn(fee, &entries[indexes[i]].Tx) {
 				return
 			}
@@ -141,8 +168,8 @@ func (pool *TxPool) Put(fee uint64, entry *TxPoolEntry) {
 		pool.putCallback(fee, &entry.Tx)
 	}
 
-	pool.mu.Lock()
-	defer pool.mu.Unlock()
+	pool.locker.Lock()
+	defer pool.locker.Unlock()
 
 	pool.Fees.Push(fee)
 
@@ -169,15 +196,15 @@ func (pool *TxPool) Put(fee uint64, entry *TxPoolEntry) {
 // 参数：
 //		count: 获取多少个交易，将返回小于等于交易的个数。
 func (pool *TxPool) Get(count int) []*TxPoolEntry {
-	pool.mu.Lock()
-	defer pool.mu.Unlock()
-
 	var (
 		counter = 0
 		i       int
 		key     uint64
 	)
 	txs := make([]*TxPoolEntry, 0, count)
+
+	pool.locker.Lock()
+	defer pool.locker.Unlock()
 
 	for !pool.Empty() {
 		key = pool.Fees.Front()
@@ -202,8 +229,8 @@ func (pool *TxPool) Get(count int) []*TxPoolEntry {
 }
 
 func (pool *TxPool) Remove(txid [32]byte) {
-	pool.mu.Lock()
-	defer pool.mu.Unlock()
+	pool.locker.Lock()
+	defer pool.locker.Unlock()
 
 	for fee, entries := range pool.Cache {
 		for i, entry := range entries {
@@ -274,4 +301,8 @@ func (u *UniquePriorityQueue) Front() uint64 {
 
 func (u *UniquePriorityQueue) Pop() {
 	u.Queue = u.Queue[1:]
+}
+
+func (u *UniquePriorityQueue) Size() int {
+	return len(u.Queue)
 }
