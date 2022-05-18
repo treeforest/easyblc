@@ -1,6 +1,7 @@
 package blc
 
 import (
+	"github.com/pkg/errors"
 	"context"
 	"crypto/sha256"
 	log "github.com/treeforest/logger"
@@ -109,16 +110,39 @@ var (
 	PowLimit = UnCompact(uint32(0x1d00ffff))
 )
 
+// GetWorkRequired 获取指定区块高度的目标难度值
+func (chain *BlockChain) GetWorkRequired(height uint64) (uint32, error) {
+	preBlock, err := chain.GetBlock(height - 1)
+	if err != nil {
+		return 0, errors.WithStack(err)
+	}
+
+	if height%DifficultyAdjustmentInterval != 0 {
+		// 不需要难度调整，使用上一个区块的难度值
+		return preBlock.Bits, nil
+	}
+
+	// 找到最近2016个区块的首个区块
+	heightFirst := preBlock.Height - (DifficultyAdjustmentInterval - 1)
+	firstBlock, _ := chain.GetAncestor(heightFirst)
+
+	// 重新计算难度值
+	return chain.CalculateNextWorkRequired(preBlock, firstBlock), nil
+}
+
 // GetNextWorkRequired 计算下一个区块的难度目标值，规定10分钟出一个块
 func (chain *BlockChain) GetNextWorkRequired() uint32 {
 	lastBlock := chain.GetLatestBlock()
+
 	if (lastBlock.Height+1)%DifficultyAdjustmentInterval != 0 {
 		// 不需要难度调整，使用上一个区块的难度值
 		return lastBlock.Bits
 	}
+
 	// 找到最近2016个区块的首个区块
 	heightFirst := lastBlock.Height - (DifficultyAdjustmentInterval - 1)
 	firstBlock, _ := chain.GetAncestor(heightFirst)
+
 	// 重新计算难度值
 	return chain.CalculateNextWorkRequired(lastBlock, firstBlock)
 }

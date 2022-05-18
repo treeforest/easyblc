@@ -260,7 +260,8 @@ func (s *P2PServer) MergeRemoteState(data []byte) {
 		}
 		// 注意：这里不一定就是最新的区块，可能是之前的区块
 		if ok := s.chain.VerifyBlock(&block); !ok {
-			log.Debugf("verify block failed: %v", err)
+			log.Debug("verify block failed")
+			return
 		}
 
 		if err := s.chain.AddBlock(&block); err != nil {

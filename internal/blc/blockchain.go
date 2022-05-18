@@ -9,6 +9,7 @@ import (
 	"github.com/treeforest/easyblc/internal/blc/script"
 	"github.com/treeforest/easyblc/pkg/utils"
 	log "github.com/treeforest/logger"
+	"math/big"
 	"sync"
 	"time"
 )
@@ -152,14 +153,8 @@ func (chain *BlockChain) AddBlock(block *Block) error {
 }
 
 func (chain *BlockChain) VerifyBlock(block *Block) bool {
-	last := chain.GetLatestBlock()
-
-	// 创世区块
-	if last == nil {
-		if block.Height != 0 {
-			log.Warn("invalid block height")
-			return false
-		}
+	// 若是初始区块
+	if block.Height == 0 {
 		if block.PreHash != [32]byte{} {
 			log.Warn("invalid prehash with genesis block")
 			return false
@@ -172,35 +167,20 @@ func (chain *BlockChain) VerifyBlock(block *Block) bool {
 		return true
 	}
 
-	// 检查区块高度
-	if block.Height != last.Height+1 {
-		log.Warnf("invalid block [height:%d] latestblock [height:%d]",
-			block.Height, chain.GetLatestBlock().Height)
+	// 获得父区块
+	preBlock, err := chain.GetAncestor(block.Height - 1)
+	if err != nil {
 		return false
 	}
 
-	// 检查时间戳
-	if block.Time < last.Time {
-		log.Warn("invalid time, [%d] [%d]", block.Time, last.Time)
+	// 前哈希值是否正确
+	if block.PreHash != preBlock.Hash {
 		return false
 	}
 
-	// 检查版本号
-	if block.Version != last.Version {
-		log.Warn("invalid version, [%d] [%d]", block.Version, last.Version)
-		return false
-	}
-
-	// 检查难度目标值
-	requiredBits := chain.GetNextWorkRequired()
-	if block.Bits != requiredBits {
-		log.Warn("invalid Bits, [%d] [%d]", block.Bits, last.Bits)
-		return false
-	}
-
-	// 检查前哈希是否符合
-	if block.PreHash != last.Hash {
-		log.Warnf("invalid prehash, [%x] [%x]", block.PreHash, last.Hash)
+	// 时间戳是否符合规范
+	if block.Time < preBlock.Time {
+		log.Warn("invalid time, [%d] [%d]", block.Time, preBlock.Time)
 		return false
 	}
 
@@ -210,24 +190,45 @@ func (chain *BlockChain) VerifyBlock(block *Block) bool {
 		return false
 	}
 
-	// 检查coinbase交易
+	// 检查coinbase交易（第一个交易应该是coinbase交易）
 	coinbaseTx := block.Transactions[0]
 	if _, ok := coinbaseTx.IsCoinbase(); !ok {
 		log.Warn("first tx is not coinbase")
 		return false
 	}
 
-	// TODO: 不知道为什么传输破坏了数据，导致哈希总是计算不出来
-	//requiredCoinbaseHash, err := coinbaseTx.CalculateHash()
-	//if err != nil {
-	//	log.Errorf("calculate coinbase tx hash: %v", err)
-	//	return false
-	//}
-	//if coinbaseTx.Hash != requiredCoinbaseHash {
-	//	log.Warnf("invalid coinbase txhash, [%x] [%x]", coinbaseTx.Hash, requiredCoinbaseHash)
-	//	return false
-	//}
+	// 难度目标值
+	nBits, err := chain.GetWorkRequired(block.Height)
+	if err != nil {
+		log.Warn("get work required failed:", err)
+		return false
+	}
+	if nBits != block.Bits {
+		log.Warn("bits not equal")
+		return false
+	}
 
+	// 区块哈希值正确性判断
+	requiredCoinbaseHash, err := coinbaseTx.CalculateHash()
+	if err != nil {
+		log.Errorf("calculate coinbase tx hash: %v", err)
+		return false
+	}
+	if coinbaseTx.Hash != requiredCoinbaseHash {
+		log.Warnf("invalid coinbase txhash, [%x] [%x]", coinbaseTx.Hash, requiredCoinbaseHash)
+		return false
+	}
+
+	// 工作量证明
+	target := UnCompact(block.Bits)
+	hashBytes := block.CalculateHash()
+	hashInt := new(big.Int).SetBytes(hashBytes[:])
+	if target.Cmp(hashInt) != 1 {
+		log.Warn("nonce error")
+		return false
+	}
+
+	// 获得区块奖励
 	reward := chain.GetBlockSubsidy(block.Height)
 	full, ok := block.Transactions[0].IsCoinbase()
 	if !ok {
@@ -235,7 +236,8 @@ func (chain *BlockChain) VerifyBlock(block *Block) bool {
 		return false
 	}
 
-	fee := full - reward // 计算出使用的交易费，之后需要对比输入输出金额
+	// 获得交易费
+	fee := full - reward
 	if fee < 0 {
 		log.Warn("invalid fee")
 		return false
@@ -284,7 +286,7 @@ func (chain *BlockChain) VerifyBlock(block *Block) bool {
 			}
 
 			// 输入脚本是否合法
-			ok := script.Verify(vin.TxId, vin.ScriptSig, txOut.ScriptPubKey)
+			ok = script.Verify(vin.TxId, vin.ScriptSig, txOut.ScriptPubKey)
 			if !ok {
 				log.Warn("invalid scriptSig")
 				return false
@@ -315,13 +317,6 @@ func (chain *BlockChain) VerifyBlock(block *Block) bool {
 		return false
 	}
 
-	// 工作量证明，验证hash
-	requiredBlockHash := block.CalculateHash()
-	if block.Hash != requiredBlockHash {
-		log.Warnf("invalid block hash, hash:%x required:%x", block.Hash, requiredBlockHash)
-		return false
-	}
-
 	return true
 }
 
@@ -338,7 +333,7 @@ func (chain *BlockChain) Close() {
 	})
 }
 
-// GetAncestor 获取指定高度的祖先区块
+// GetAncestor 获取指定高度区块
 func (chain *BlockChain) GetAncestor(height uint64) (*Block, error) {
 	data, err := chain.dao.GetBlockByHeight(height)
 	if err != nil {
