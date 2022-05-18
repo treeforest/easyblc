@@ -167,48 +167,60 @@ func (chain *BlockChain) VerifyBlock(block *Block) bool {
 		return true
 	}
 
-	// 获得父区块
-	preBlock, err := chain.GetAncestor(block.Height - 1)
-	if err != nil {
+	// 1、检查hash
+	hashBytes := block.CalculateHash()
+	if hashBytes != block.Hash {
+		log.Warn("block hash error, required:%s actual:%s", hashBytes, block.Hash)
 		return false
 	}
 
-	// 前哈希值是否正确
-	if block.PreHash != preBlock.Hash {
-		return false
-	}
-
-	// 时间戳是否符合规范
-	if block.Time < preBlock.Time {
-		log.Warn("invalid time, [%d] [%d]", block.Time, preBlock.Time)
-		return false
-	}
-
-	// 至少得有一个coinbase交易
-	if len(block.Transactions) < 1 {
-		log.Warn("invalid transactions")
-		return false
-	}
-
-	// 检查coinbase交易（第一个交易应该是coinbase交易）
-	coinbaseTx := block.Transactions[0]
-	if _, ok := coinbaseTx.IsCoinbase(); !ok {
-		log.Warn("first tx is not coinbase")
-		return false
-	}
-
-	// 难度目标值
+	// 2、检查难度目标值
 	nBits, err := chain.GetWorkRequired(block.Height)
 	if err != nil {
 		log.Warn("get work required failed:", err)
 		return false
 	}
 	if nBits != block.Bits {
-		log.Warn("bits not equal")
+		log.Warn("bits not equal， required:%d actual:%d", nBits, block.Bits)
 		return false
 	}
 
-	// 区块哈希值正确性判断
+	// 3、检查工作量证明
+	target := UnCompact(block.Bits)
+	hashInt := new(big.Int).SetBytes(hashBytes[:])
+	if target.Cmp(hashInt) != 1 {
+		log.Warn("nonce error")
+		return false
+	}
+
+	// 4、检查前preHash
+	preBlock, err := chain.GetAncestor(block.Height - 1)
+	if err != nil {
+		return false
+	}
+	if block.PreHash != preBlock.Hash {
+		return false
+	}
+
+	// 5、检查时间戳，需要小于父区块的时间戳
+	if block.Time < preBlock.Time {
+		log.Warn("invalid time, [%d] [%d]", block.Time, preBlock.Time)
+		return false
+	}
+
+	// 6、检查coinbase交易
+	// 6.1 至少得有一个coinbase交易
+	if len(block.Transactions) < 1 {
+		log.Warn("invalid transactions")
+		return false
+	}
+	// 6.2 第一个交易应该是coinbase交易
+	coinbaseTx := block.Transactions[0]
+	if _, ok := coinbaseTx.IsCoinbase(); !ok {
+		log.Warn("first tx is not coinbase")
+		return false
+	}
+	// 6.3 检查coinbase哈希值
 	requiredCoinbaseHash, err := coinbaseTx.CalculateHash()
 	if err != nil {
 		log.Errorf("calculate coinbase tx hash: %v", err)
@@ -219,43 +231,29 @@ func (chain *BlockChain) VerifyBlock(block *Block) bool {
 		return false
 	}
 
-	// 工作量证明
-	target := UnCompact(block.Bits)
-	hashBytes := block.CalculateHash()
-	hashInt := new(big.Int).SetBytes(hashBytes[:])
-	if target.Cmp(hashInt) != 1 {
-		log.Warn("nonce error")
-		return false
-	}
-
-	// 获得区块奖励
+	// 7. 检查矿工费（交易费+区块奖励）
+	// 7.1 获得区块奖励
 	reward := chain.GetBlockSubsidy(block.Height)
 	full, ok := block.Transactions[0].IsCoinbase()
 	if !ok {
 		log.Warn("first transaction is not coinbase tx")
 		return false
 	}
-
-	// 获得交易费
+	// 7.2 获得交易费
 	fee := full - reward
 	if fee < 0 {
 		log.Warn("invalid fee")
 		return false
 	}
-
-	// 检查交易输入
-	var (
-		inputAmount, outputAmount uint64 = 0, 0
-	)
+	// 7.3 解析出输入输出金额
+	var inputAmount, outputAmount uint64 = 0, 0
 	for i := 1; i < len(block.Transactions); i++ {
 		tx := block.Transactions[i]
-
 		if _, ok = tx.IsCoinbase(); ok {
 			// coinbase 交易必须放在第一个交易
 			log.Warn("invalid coinbase transaction")
 			return false
 		}
-
 		// 交易的哈希
 		requiredTxHash, _ := tx.CalculateHash()
 		if tx.Hash != requiredTxHash {
@@ -263,35 +261,29 @@ func (chain *BlockChain) VerifyBlock(block *Block) bool {
 			return false
 		}
 		// TODO: 交易时间检查
-
 		// 交易的输入输出数量
 		if len(tx.Vins) == 0 || len(tx.Vouts) == 0 {
 			log.Warn("invalid vins or vouts")
 			return false
 		}
-
 		// 交易输入
 		for _, vin := range tx.Vins {
 			if vin.IsCoinbase() {
 				log.Warn("invalid coinbase tx input")
 				return false
 			}
-
 			txOut := chain.UTXOSet().Get(vin.TxId, int(vin.Vout))
-
 			// 交易输入是否合法
 			if txOut == nil {
 				log.Warn("invalid tx input") // 没找到对应的交易输出
 				return false
 			}
-
 			// 输入脚本是否合法
 			ok = script.Verify(vin.TxId, vin.ScriptSig, txOut.ScriptPubKey)
 			if !ok {
 				log.Warn("invalid scriptSig")
 				return false
 			}
-
 			// 记录输入金额
 			inputAmount += txOut.Value
 		}
@@ -304,14 +296,13 @@ func (chain *BlockChain) VerifyBlock(block *Block) bool {
 			outputAmount += vout.Value
 		}
 	}
-
-	// 输入输出金额对比
+	// 7.4 矿工费用 = 交易输入金额 - 交易输出金额
 	if inputAmount-outputAmount != fee {
 		log.Warn("invalid inputAmount outputAmount")
 		return false
 	}
 
-	// 检查merkle tree
+	// 8、检查默克尔树 merkle tree
 	if !bytes.Equal(block.CalculateMerkleRoot(), block.MerkelRoot) {
 		log.Warn("invalid merkel root")
 		return false
