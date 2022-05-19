@@ -9,12 +9,12 @@ import (
 	"sync"
 	"time"
 
-	pb "github.com/treeforest/easyblc/pb/api"
+	pb "github.com/treeforest/easyblc/pb"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
 
-func newRpcSerer(port int, chain *BlockChain) *rpcServer {
+func RunRpcSerer(port int, chain *BlockChain) *rpcServer {
 	if port < 0 {
 		panic("port < 0")
 	}

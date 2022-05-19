@@ -6,7 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
-	"github.com/treeforest/easyblc/pkg/base58check"
+	"github.com/treeforest/easyblc/base58check"
 	log "github.com/treeforest/logger"
 )
 

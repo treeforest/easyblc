@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"fmt"
-	"github.com/treeforest/easyblc/pkg/base58"
+	"github.com/treeforest/easyblc/base58"
 )
 
 const (

@@ -6,7 +6,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/treeforest/easyblc/config"
 	"github.com/treeforest/easyblc/graceful"
-	pb "github.com/treeforest/easyblc/pb/server"
+	pb "github.com/treeforest/easyblc/pb"
 	"github.com/treeforest/gossip"
 	log "github.com/treeforest/logger"
 	"sync"
@@ -405,7 +405,7 @@ func (s *Server) gossipTransaction(fee uint64, tx *Transaction) {
 	s.gossip(&pb.Message{
 		SrcId: s.Id,
 		Content: &pb.Message_Tx{
-			Tx: &pb.Transaction{
+			Tx: &pb.TxMessage{
 				Fee:  fee,
 				Data: txData,
 			},

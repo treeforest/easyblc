@@ -6,7 +6,7 @@ endpoint: localhost:3006
 type: 0
 
 # 区块链数据库存储位置
-dbpath: ../blockchain
+dbpath: ../leveldb
 
 # 启动时连接的节点地址
 bootstrapPeers:

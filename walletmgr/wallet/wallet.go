@@ -5,7 +5,7 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
-	"github.com/treeforest/easyblc/pkg/base58check"
+	"github.com/treeforest/easyblc/base58check"
 
 	"golang.org/x/crypto/ripemd160"
 )

@@ -12,6 +12,8 @@ option (gogoproto.sizer_all) = true;
 option (gogoproto.unmarshaler_all) = true;
 option (gogoproto.goproto_getters_all) = false;
 
+import "common.proto";
+
 enum NodeType {
   Full = 0;
   Miner = 1;
@@ -25,7 +27,7 @@ message Message {
     PullRequest pull_req = 2;
     PullResponse pull_resp = 3;
     // 广播新的交易
-    Transaction tx = 4;
+    TxMessage tx = 4;
     // 广播新的区块
     Envelope block = 5;
   }
@@ -42,7 +44,7 @@ message PullResponse {
   repeated bytes txs = 2;
 }
 
-message Transaction {
+message TxMessage {
   uint64 fee = 1;
   bytes data = 2;
 }
@@ -50,5 +52,3 @@ message Transaction {
 message Envelope {
   bytes payload = 1;
 }
-
-message Empty{}

@@ -12,6 +12,8 @@ option (gogoproto.sizer_all) = true;
 option (gogoproto.unmarshaler_all) = true;
 option (gogoproto.goproto_getters_all) = false;
 
+import "common.proto";
+
 service Api {
   // GetHeight 获取区块高度
   rpc GetHeight(Empty) returns (GetHeightResp) {}
@@ -59,8 +61,6 @@ message Transaction {
   // 时间戳
   int64 timestamp = 4;
 }
-
-message Empty {}
 
 message GetHeightResp {uint64 height = 1;}
 

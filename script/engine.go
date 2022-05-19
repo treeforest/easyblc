@@ -5,7 +5,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/sha256"
-	"github.com/treeforest/easyblc/internal/blc/script/stack"
+	"github.com/treeforest/easyblc/script/stack"
 	"golang.org/x/crypto/ripemd160"
 )
 

@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	pb "github.com/treeforest/easyblc/pb/api"
+	pb "github.com/treeforest/easyblc/pb"
 	"github.com/treeforest/easyblc/walletmgr"
 	log "github.com/treeforest/logger"
 	"google.golang.org/grpc"

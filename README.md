@@ -50,7 +50,7 @@ httpserverport: 5999
 
 * 启动节点
 ```bash
-cd cmd/node && go run main.go -conf config.yaml
+cd cmd/peer && go run main.go -conf config.yaml
 ```
 
 ### HTTP 客户端调用
