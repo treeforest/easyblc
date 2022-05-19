@@ -7,13 +7,17 @@ This is an easy blockchain implement with Go.
 - [x] merkle tree/merkle proof
 - [x] base58/base58check
 - [x] script P2PKH
-- [x] wallet
+- [x] wallet/wallet managr
 - [x] UTXO
 - [x] pow/difficulty adjust
-- [x] transaction pool
-- [x] P2P network
+- [x] transaction pool with priority queue
+- [x] p2p network(gossip)
 - [x] web server
+- [x] command
+- [x] rpc server
 - [ ] Bloom filter
+- [ ] smart contract
+- [ ] DAG
 
 ## Usage
 
