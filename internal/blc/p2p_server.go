@@ -5,7 +5,7 @@ import (
 	"context"
 	"github.com/google/uuid"
 	"github.com/treeforest/easyblc/internal/blc/config"
-	"github.com/treeforest/easyblc/internal/blc/proto/p2p"
+	"github.com/treeforest/easyblc/internal/blc/pb/p2p"
 	"github.com/treeforest/easyblc/pkg/graceful"
 	"github.com/treeforest/gossip"
 	log "github.com/treeforest/logger"
@@ -63,7 +63,7 @@ func NewP2PServer(conf *config.Config, chain *BlockChain) *P2PServer {
 		stop:            make(chan struct{}, 1),
 	}
 
-	server.chain.GetTxPool().SetPutCallback(server.gossipNewTransaction)
+	server.chain.GetTxPool().SetPutCallback(server.gossipTransaction)
 
 	return server
 }
@@ -86,7 +86,7 @@ func (s *P2PServer) Run() {
 func (s *P2PServer) Stop() {
 	s.stopOnce.Do(func() {
 		if s.nodeType == p2p.NodeType_Miner {
-			s.stopMiningChan <- struct{}{}
+			s.stopMining()
 		}
 		close(s.stop)
 		s.gossipSrv.Stop()
@@ -249,35 +249,61 @@ func (s *P2PServer) MergeRemoteState(data []byte) {
 		log.Warnf("unmarshal message failed: %v", err)
 		return
 	}
-	resp := msg.GetPullResp()
 
-	// 同步区块
-	for _, blockData := range resp.Blocks {
+	resp := msg.GetPullResp()
+	blocks := make([]*Block, 0)
+	var err error
+
+	// 1. 检查接收到的所有区块，验证合法性（工作量证明）
+	for i, blockData := range resp.Blocks {
 		block := Block{}
-		if err := block.Unmarshal(blockData); err != nil {
+		if err = block.Unmarshal(blockData); err != nil {
 			log.Warnf("unmarshal block failed: %v", err)
 			break
 		}
-		// 注意：这里不一定就是最新的区块，可能是之前的区块
-		if ok := s.chain.VerifyBlock(&block); !ok {
+		var preBlock *Block
+		if i == 0 {
+			preBlock, err = s.chain.GetBlock(block.Height - 1)
+			if err != nil {
+				return
+			}
+		} else {
+			preBlock = blocks[i-1]
+		}
+		if ok := s.chain.VerifyBlock(preBlock, &block); !ok {
 			log.Debug("verify block failed")
 			return
 		}
+		blocks = append(blocks, &block)
+	}
 
-		if err := s.chain.AddBlock(&block); err != nil {
-			log.Warnf("add block failed: %v", err)
-			break
+	defer s.startMining()
+
+	if len(blocks) > 0 && blocks[len(blocks)-1].Height > s.chain.GetLatestBlock().Height {
+		// 开始同步区块
+		s.stopMining()
+
+		if err = s.chain.RemoveBlockFrom(blocks[0].Height); err != nil {
+			log.Errorf("remove block from %d failed: %+v", blocks[0].Height, err)
+			return
+		}
+
+		for _, block := range blocks {
+			if err = s.chain.AddBlock(block); err != nil {
+				log.Warnf("add block failed: %v", err)
+				break
+			}
 		}
 	}
 
 	// 同步交易
 	for _, txData := range resp.Txs {
 		tx := Transaction{}
-		if err := tx.Unmarshal(txData); err != nil {
+		if err = tx.Unmarshal(txData); err != nil {
 			log.Warnf("unmarshal transaction failed: %v", err)
 			break
 		}
-		if err := s.chain.AddToTxPool(tx); err != nil {
+		if err = s.chain.AddToTxPool(tx); err != nil {
 			log.Warnf("add to tx pool failed: %v", err)
 			break
 		}
@@ -285,19 +311,22 @@ func (s *P2PServer) MergeRemoteState(data []byte) {
 }
 
 func (s *P2PServer) startMining() {
-	s.startMiningChan <- struct{}{}
+	if s.nodeType == p2p.NodeType_Miner {
+		s.startMiningChan <- struct{}{}
+	}
 }
 
 func (s *P2PServer) stopMining() {
-	s.stopMiningChan <- struct{}{}
+	if s.nodeType == p2p.NodeType_Miner {
+		s.stopMiningChan <- struct{}{}
+	}
 }
 
 // mining 挖矿
 func (s *P2PServer) mining() {
-	var (
-		ctx    context.Context
-		cancel context.CancelFunc = nil
-	)
+	var ctx context.Context
+	var cancel context.CancelFunc = nil
+	done := make(chan struct{}, 1)
 
 	for {
 		select {
@@ -305,23 +334,34 @@ func (s *P2PServer) mining() {
 			if cancel != nil {
 				log.Debug("cancel mining...")
 				cancel()
+				<-done
 				cancel = nil
 			}
 		case <-s.startMiningChan:
 			if cancel != nil {
-				// 已经在挖矿
+				// 正在挖矿
 				break
 			}
 
 			log.Debug("start mining...")
 			ctx, cancel = context.WithCancel(context.Background())
 			go func() {
+				defer func() {
+					done <- struct{}{}
+				}()
+
 				if s.chain.GetLatestBlock() == nil {
 					log.Info("create blockchain with genesis block...")
-					s.chain.MineGenesisBlock(s.rewardAddress)
-					cancel()
-					cancel = nil
-					return
+					s.chain.MineGenesisBlock(ctx, s.rewardAddress)
+					select {
+					case <-ctx.Done():
+						log.Debug("cancel mining...")
+						// 取消挖矿
+						return
+					default:
+					}
+					log.Info("mining block success, height: 0")
+					s.gossipBlock(s.chain.GetLatestBlock())
 				}
 
 				for {
@@ -340,24 +380,36 @@ func (s *P2PServer) mining() {
 					}
 
 					log.Info("mining block success, height: ", s.chain.GetLatestBlock().Height)
+					s.gossipBlock(s.chain.GetLatestBlock())
 				}
 			}()
 		}
 	}
 }
 
-func (s *P2PServer) gossipNewTransaction(fee uint64, tx *Transaction) {
-	txData, _ := tx.Marshal()
-	msg := &p2p.Message{
+func (s *P2PServer) gossipBlock(block *Block) {
+	bData, _ := block.Marshal()
+	s.gossip(&p2p.Message{
 		SrcId: s.Id,
-		Content: &p2p.Message_NewTx{
-			NewTx: &p2p.Transaction{
+		Content: &p2p.Message_Block{
+			Block: &p2p.Envelope{
+				Payload: bData,
+			},
+		},
+	})
+}
+
+func (s *P2PServer) gossipTransaction(fee uint64, tx *Transaction) {
+	txData, _ := tx.Marshal()
+	s.gossip(&p2p.Message{
+		SrcId: s.Id,
+		Content: &p2p.Message_Tx{
+			Tx: &p2p.Transaction{
 				Fee:  fee,
 				Data: txData,
 			},
 		},
-	}
-	s.gossip(msg)
+	})
 }
 
 func (s *P2PServer) gossip(msg *p2p.Message) {
@@ -373,29 +425,45 @@ func (s *P2PServer) gossip(msg *p2p.Message) {
 func (s *P2PServer) dispatch() {
 	for {
 		select {
-		case msg := <-s.accept:
-			s.handleMessage(msg)
 		case <-s.stop:
 			return
+		case msg := <-s.accept:
+			switch msg.Content.(type) {
+			case *p2p.Message_Tx:
+				s.processTxMessage(msg)
+			case *p2p.Message_Block:
+				s.processBlockMessage(msg)
+			}
 		}
 	}
 }
 
-func (s *P2PServer) handleMessage(msg *p2p.Message) {
-	switch msg.Content.(type) {
-	case *p2p.Message_NewTx:
-		tx := Transaction{}
-		if err := tx.Unmarshal(msg.GetNewTx().Data); err != nil {
-			log.Warn(err)
-			return
-		}
-		_ = s.chain.AddToTxPool(tx)
-	case *p2p.Message_NewBlock:
-		block := Block{}
-		if err := block.Unmarshal(msg.GetNewBlock().Payload); err != nil {
-			log.Warn(err)
-			return
-		}
-		_ = s.chain.AddBlock(&block)
+func (s *P2PServer) processTxMessage(msg *p2p.Message) {
+	tx := Transaction{}
+	if err := tx.Unmarshal(msg.GetTx().Data); err != nil {
+		log.Warn(err)
+		return
 	}
+	_ = s.chain.AddToTxPool(tx)
+}
+
+func (s *P2PServer) processBlockMessage(msg *p2p.Message) {
+	block := Block{}
+	if err := block.Unmarshal(msg.GetBlock().Payload); err != nil {
+		log.Warn(err)
+		return
+	}
+
+	preBlock, err := s.chain.GetBlock(block.Height - 1)
+	if err != nil {
+		return
+	}
+	if ok := s.chain.VerifyBlock(preBlock, &block); !ok {
+		return
+	}
+
+	s.stopMining()
+	defer s.startMining()
+
+	_ = s.chain.AddBlock(&block)
 }

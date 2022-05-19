@@ -3,7 +3,7 @@ package blc
 import (
 	"bytes"
 	"context"
-	"errors"
+	"github.com/pkg/errors"
 	"fmt"
 	"github.com/treeforest/easyblc/internal/blc/dao"
 	"github.com/treeforest/easyblc/internal/blc/script"
@@ -77,11 +77,11 @@ func CreateBlockChainWithGenesisBlock(dbPath, address string) *BlockChain {
 		latestBlock: nil,
 	}
 
-	blc.MineGenesisBlock(address)
+	blc.MineGenesisBlock(context.Background(), address)
 	return blc
 }
 
-func (chain *BlockChain) MineGenesisBlock(address string) {
+func (chain *BlockChain) MineGenesisBlock(ctx context.Context, address string) {
 	if !utils.IsValidAddress(address) {
 		log.Fatalf("invalid address: %s", address)
 	}
@@ -92,7 +92,7 @@ func (chain *BlockChain) MineGenesisBlock(address string) {
 		log.Fatal("create coinbase transaction failed:", err)
 	}
 
-	block, succ := CreateGenesisBlock([]Transaction{*coinbaseTx})
+	block, succ := CreateGenesisBlock(ctx, []Transaction{*coinbaseTx})
 	if !succ {
 		log.Fatal("create Genesis Block failed")
 	}
@@ -120,8 +120,13 @@ func (chain *BlockChain) loadLatestBlock() error {
 }
 
 func (chain *BlockChain) AddBlock(block *Block) error {
+	preBlock, err := chain.GetAncestor(block.Height - 1)
+	if err != nil {
+		return errors.WithStack(err)
+	}
+
 	// 验证区块合法性
-	if ok := chain.VerifyBlock(block); !ok {
+	if ok := chain.VerifyBlock(preBlock, block); !ok {
 		return fmt.Errorf("invalid block")
 	}
 
@@ -152,7 +157,11 @@ func (chain *BlockChain) AddBlock(block *Block) error {
 	return nil
 }
 
-func (chain *BlockChain) VerifyBlock(block *Block) bool {
+func (chain *BlockChain) VerifyBlock(preBlock, block *Block) bool {
+	if preBlock == nil || block == nil {
+		return false
+	}
+
 	// 若是初始区块
 	if block.Height == 0 {
 		if block.PreHash != [32]byte{} {
@@ -194,10 +203,10 @@ func (chain *BlockChain) VerifyBlock(block *Block) bool {
 	}
 
 	// 4、检查前preHash
-	preBlock, err := chain.GetAncestor(block.Height - 1)
-	if err != nil {
-		return false
-	}
+	//preBlock, err := chain.GetAncestor(block.Height - 1)
+	//if err != nil {
+	//	return false
+	//}
 	if block.PreHash != preBlock.Hash {
 		return false
 	}

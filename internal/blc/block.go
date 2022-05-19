@@ -27,8 +27,8 @@ type Block struct {
 	MerkleTree   *merkle.Tree  // 默克尔树
 }
 
-func CreateGenesisBlock(txs []Transaction) (*Block, bool) {
-	return NewBlock(context.Background(), 0x1d00ffff, 0, [32]byte{}, txs)
+func CreateGenesisBlock(ctx context.Context, txs []Transaction) (*Block, bool) {
+	return NewBlock(ctx, 0x1d00ffff, 0, [32]byte{}, txs)
 	//return NewBlock(context.Background(), 0x1e00ffff, 0, [32]byte{}, txs)
 }
 
