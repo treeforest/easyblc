@@ -1,23 +1,22 @@
-package client
+package blc
 
 import (
 	"context"
 	"flag"
 	"fmt"
-	"github.com/treeforest/easyblc/internal/blc"
-	"github.com/treeforest/easyblc/internal/blc/walletmgr"
-	"github.com/treeforest/easyblc/pkg/utils"
-	log "github.com/treeforest/logger"
 	"math/rand"
 	"os"
 	"time"
+
+	"github.com/treeforest/easyblc/walletmgr"
+	log "github.com/treeforest/logger"
 )
 
 type Command struct {
 	dbPath string
 }
 
-func New(dbPath string) *Command {
+func NewCommand(dbPath string) *Command {
 	return &Command{dbPath}
 }
 
@@ -142,17 +141,17 @@ HELP:
 }
 
 func (c *Command) printHeight() {
-	bc := blc.MustGetExistBlockChain(c.dbPath)
+	bc := MustGetExistBlockChain(c.dbPath)
 	defer bc.Close()
 	log.Infof("当前高度：%d", bc.GetLatestBlock().Height)
 }
 
 func (c *Command) printTxPool() {
-	bc := blc.MustGetExistBlockChain(c.dbPath)
+	bc := MustGetExistBlockChain(c.dbPath)
 	defer bc.Close()
 
 	fmt.Println("tx pool: ")
-	bc.GetTxPool().Traverse(func(fee uint64, tx *blc.Transaction) bool {
+	bc.GetTxPool().Traverse(func(fee uint64, tx *Transaction) bool {
 		fmt.Printf("\tfee: %d\n", fee)
 		fmt.Printf("\ttxHash: %x\n", tx.Hash)
 		fmt.Printf("\ttime: %d\n", tx.Time)
@@ -180,7 +179,7 @@ func (c *Command) printTxPool() {
 }
 
 func (c *Command) getBalance() {
-	bc := blc.MustGetExistBlockChain(c.dbPath)
+	bc := MustGetExistBlockChain(c.dbPath)
 	defer bc.Close()
 
 	total := uint64(0)
@@ -198,10 +197,10 @@ func (c *Command) getBalance() {
 
 func (c *Command) mining(address string, n int) {
 	// 检查地址格式
-	if !utils.IsValidAddress(address) {
+	if !IsValidAddress(address) {
 		log.Fatal("ADDRESS is not a valid address")
 	}
-	bc := blc.MustGetExistBlockChain(c.dbPath)
+	bc := MustGetExistBlockChain(c.dbPath)
 	defer bc.Close()
 
 	for i := 0; i < n; i++ {
@@ -213,10 +212,10 @@ func (c *Command) mining(address string, n int) {
 
 func (c *Command) send(from, to string, amount uint64) {
 	// 检查地址格式
-	if !utils.IsValidAddress(from) {
+	if !IsValidAddress(from) {
 		log.Fatal("FROM is not a valid address")
 	}
-	if !utils.IsValidAddress(to) {
+	if !IsValidAddress(to) {
 		log.Fatal("TO is not a valid address")
 	}
 
@@ -230,7 +229,7 @@ func (c *Command) send(from, to string, amount uint64) {
 		log.Fatal("not found wallet:", err)
 	}
 
-	bc := blc.MustGetExistBlockChain(c.dbPath)
+	bc := MustGetExistBlockChain(c.dbPath)
 	defer bc.Close()
 
 	// 检查余额
@@ -242,10 +241,10 @@ func (c *Command) send(from, to string, amount uint64) {
 
 	// 交易输入
 	log.Debug("check utxo...")
-	var vins []blc.TxInput
+	var vins []TxInput
 	utxoSet := bc.GetUTXOSet(from)
-	utxoSet.Traverse(func(txHash [32]byte, index int, output blc.TxOutput) {
-		vin, err := blc.NewTxInput(txHash, uint32(index), &wallet.Key)
+	utxoSet.Traverse(func(txHash [32]byte, index int, output TxOutput) {
+		vin, err := NewTxInput(txHash, uint32(index), &wallet.Key)
 		if err != nil {
 			log.Fatal("create tx vin failed:", err)
 		}
@@ -268,20 +267,20 @@ func (c *Command) send(from, to string, amount uint64) {
 
 	// 交易输出
 	log.Debug("create transaction output...")
-	var vouts []blc.TxOutput
-	vout, err := blc.NewTxOutput(amount, to)
+	var vouts []TxOutput
+	vout, err := NewTxOutput(amount, to)
 	if err != nil {
 		log.Fatal("create tx vout failed:", err)
 	}
-	changeVout, err := blc.NewTxOutput(balance-amount-fee, changeAddress)
+	changeVout, err := NewTxOutput(balance-amount-fee, changeAddress)
 	if err != nil {
 		log.Fatal("create tx vout failed:", err)
 	}
-	vouts = append(vouts, []blc.TxOutput{*vout, *changeVout}...)
+	vouts = append(vouts, []TxOutput{*vout, *changeVout}...)
 
 	// 构造交易
 	log.Debug("create transaction...")
-	tx, err := blc.NewTransaction(vins, vouts)
+	tx, err := NewTransaction(vins, vouts)
 	if err != nil {
 		log.Fatal("create transaction failed:", err)
 	}
@@ -326,17 +325,17 @@ func (c *Command) createWallet() {
 }
 
 func (c *Command) createBlockChainWithGenesisBlock(address string) {
-	bc := blc.CreateBlockChainWithGenesisBlock(c.dbPath, address)
+	bc := CreateBlockChainWithGenesisBlock(c.dbPath, address)
 	defer bc.Close()
 	log.Info("create block chain success")
 }
 
 func (c *Command) printChain() {
-	bc := blc.MustGetExistBlockChain(c.dbPath)
+	bc := MustGetExistBlockChain(c.dbPath)
 	defer bc.Close()
 
 	fmt.Println("blockchain:")
-	err := bc.Traverse(func(block *blc.Block) bool {
+	err := bc.Traverse(func(block *Block) bool {
 		fmt.Printf("\tHeight:%d\n", block.Height)
 		fmt.Printf("\tHash:%x\n", block.Hash)
 		fmt.Printf("\tPrevkHash:%x\n", block.PreHash)

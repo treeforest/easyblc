@@ -2,7 +2,7 @@ package blc
 
 import (
 	"fmt"
-	"github.com/treeforest/easyblc/internal/blc/dao"
+	"github.com/treeforest/easyblc/dao"
 	"math/big"
 )
 

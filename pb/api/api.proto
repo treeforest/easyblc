@@ -1,0 +1,88 @@
+syntax = "proto3";
+
+option go_package = ".;pb";
+
+// gogo proto
+import "gogoproto/gogo.proto";
+option (gogoproto.gostring_all) = true;
+option (gogoproto.equal_all) = true;
+option (gogoproto.verbose_equal_all) = true;
+option (gogoproto.marshaler_all) = true;
+option (gogoproto.sizer_all) = true;
+option (gogoproto.unmarshaler_all) = true;
+option (gogoproto.goproto_getters_all) = false;
+
+service Api {
+  // GetHeight 获取区块高度
+  rpc GetHeight(Empty) returns (GetHeightResp) {}
+  // GetBlocks 获取指定范围内的区块
+  rpc GetBlocks(GetBlocksReq) returns (GetBlocksResp) {}
+  // GetBalance 获取指定地址的余额
+  rpc GetBalance(GetBalanceReq) returns (GetBalanceResp) {}
+  // GetUTXO 获取指定地址的未花费输出
+  rpc GetUTXO(GetUTXOReq) returns (GetUTXOResp) {}
+  // GetTxPool 返回交易池对象
+  rpc GetTxPool(Empty) returns (GetTxPoolResp) {}
+  // PostTxReq 发起交易
+  rpc PostTx(PostTxReq) returns (Empty) {}
+}
+
+message TxInput {
+  // 引用的上一笔交易的交易哈希，创币交易初始化全为0
+  bytes tx_id = 1;
+  // 引用的上一笔交易的输出索引，创币交易初始化为0xFFFFFFFF
+  uint32 vout = 2;
+  // 解锁脚本
+  bytes script_sig = 3;
+  // 创币交易长度
+  int32 coinbase_data_size = 4;
+  // 创币交易（用户可以在这里写下任何东西，可辅助挖矿）
+  bytes coinbase_data = 5;
+}
+
+message TxOutput {
+  // 输出金额
+  uint64 value = 1;
+  // 输出地址
+  string address = 2;
+  // 锁定脚本
+  bytes script_pub_key = 3;
+}
+
+message Transaction {
+  // hash by sha256 with 32 bytes
+  bytes hash = 1;
+  // 交易输入
+  repeated TxInput ins = 2[(gogoproto.nullable) = false];
+  // 交易输出
+  repeated TxOutput outs = 3[(gogoproto.nullable) = false];
+  // 时间戳
+  int64 timestamp = 4;
+}
+
+message Empty {}
+
+message GetHeightResp {uint64 height = 1;}
+
+message GetBlocksReq {
+  uint64 start_height = 1;
+  uint64 end_height = 2;
+}
+message GetBlocksResp {bytes blocks = 1;}
+
+message GetBalanceReq{string address = 1;}
+message GetBalanceResp{uint64 balance = 2;}
+
+message GetUTXOReq{string address = 1;}
+message UTXO {
+  bytes tx_hash = 1;
+  int32 index = 2;
+  TxOutput tx_out = 3[(gogoproto.nullable) = false];
+}
+message GetUTXOResp{repeated UTXO utxos = 1[(gogoproto.nullable) = false];}
+
+message GetTxPoolResp {bytes tx_pool = 1;}
+
+message SubmitReq{}
+
+message PostTxReq {Transaction tx = 1[(gogoproto.nullable) = false];}

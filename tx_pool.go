@@ -1,6 +1,7 @@
 package blc
 
 import (
+	"encoding/json"
 	"errors"
 	"math/rand"
 	"sync"
@@ -253,6 +254,18 @@ func (pool *TxPool) Empty() bool {
 
 func (pool *TxPool) Close() error {
 	return nil
+}
+
+func (pool *TxPool) Marshal() ([]byte, error) {
+	pool.locker.RLock()
+	defer pool.locker.RUnlock()
+	return json.Marshal(pool)
+}
+
+func (pool *TxPool) Unmarshal(b []byte) error {
+	pool.locker.Lock()
+	defer pool.locker.Unlock()
+	return json.Unmarshal(b, pool)
 }
 
 // UniquePriorityQueue 唯一元素的优先级队列, 按照从大到小排列

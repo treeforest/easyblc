@@ -1,51 +1,32 @@
-package client
+package blc
 
 import (
-	"bytes"
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
-	"github.com/treeforest/easyblc/internal/blc"
-	"github.com/treeforest/easyblc/internal/blc/walletmgr"
-	"github.com/treeforest/easyblc/pkg/utils"
-	log "github.com/treeforest/logger"
-	"gopkg.in/yaml.v3"
-	"io/ioutil"
 	"math/rand"
-	"net/http"
 	"os"
 	"strconv"
 	"strings"
 	"time"
+
+	pb "github.com/treeforest/easyblc/pb/api"
+	"github.com/treeforest/easyblc/walletmgr"
+	log "github.com/treeforest/logger"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
-type Config struct {
-	BaseUrl string // 基础url
+type rpcClient struct {
+	address string
 }
 
-func LoadConfig() *Config {
-	data, err := ioutil.ReadFile("config.yaml")
-	if err != nil {
-		log.Fatal("read file failed:", err)
-	}
-	c := &Config{}
-	err = yaml.Unmarshal(data, c)
-	if err != nil {
-		log.Fatal("unmarshal failed:", err)
-	}
-	return c
+func NewRpcClient(address string) *rpcClient {
+	return &rpcClient{address: address}
 }
 
-type HttpClient struct {
-	baseUrl string
-}
-
-func NewHttpClient() *HttpClient {
-	conf := LoadConfig()
-	return &HttpClient{baseUrl: conf.BaseUrl}
-}
-
-func (c *HttpClient) printUsage() {
+func (c *rpcClient) printUsage() {
 	fmt.Println("Usage:")
 	// 高度
 	fmt.Printf("\theight -- 打印区块链高度\n")
@@ -70,7 +51,7 @@ func (c *HttpClient) printUsage() {
 	fmt.Printf("\ttxpool -- 获取交易池内的交易信息")
 }
 
-func (c *HttpClient) Run() {
+func (c *rpcClient) Run() {
 	// 区块高度
 	cmdHeight := flag.NewFlagSet("height", flag.ExitOnError)
 	// 输出区块链信息
@@ -152,7 +133,7 @@ HELP:
 	c.printUsage()
 }
 
-func (c *HttpClient) send(from, to, amount string, fee uint64) {
+func (c *rpcClient) send(from, to, amount string, fee uint64) {
 	inputAddrs := strings.Split(from, ",")
 	outputAddrs := strings.Split(to, ",")
 	amounts := strings.Split(amount, ",")
@@ -162,7 +143,7 @@ func (c *HttpClient) send(from, to, amount string, fee uint64) {
 	}
 
 	for _, addr := range outputAddrs {
-		if !utils.IsValidAddress(addr) {
+		if !IsValidAddress(addr) {
 			log.Fatalf("%s is not a valid address", addr)
 		}
 	}
@@ -175,7 +156,7 @@ func (c *HttpClient) send(from, to, amount string, fee uint64) {
 		if !mgr.Has(addr) {
 			log.Fatalf("you don't have the address %s in  wallet", addr)
 		}
-		if !utils.IsValidAddress(addr) {
+		if !IsValidAddress(addr) {
 			log.Fatalf("%s is not a valid address", addr)
 		}
 		balance := c.getBalance(addr)
@@ -199,7 +180,7 @@ func (c *HttpClient) send(from, to, amount string, fee uint64) {
 		log.Fatal("输入金额小于输出金额")
 	}
 
-	vins := make([]blc.TxInput, 0)
+	vins := make([]TxInput, 0)
 	for _, addr := range inputAddrs {
 		utxo := c.getUtxo(addr)
 		if utxo == nil {
@@ -211,7 +192,7 @@ func (c *HttpClient) send(from, to, amount string, fee uint64) {
 		}
 		for txHash, outputs := range utxo {
 			for index, _ := range outputs {
-				vin, err := blc.NewTxInput(txHash, uint32(index), &wallet.Key)
+				vin, err := NewTxInput(txHash, uint32(index), &wallet.Key)
 				if err != nil {
 					log.Fatal("create tx vin failed:", err)
 				}
@@ -220,9 +201,9 @@ func (c *HttpClient) send(from, to, amount string, fee uint64) {
 		}
 	}
 
-	vouts := make([]blc.TxOutput, 0)
+	vouts := make([]TxOutput, 0)
 	for i, addr := range outputAddrs {
-		vout, err := blc.NewTxOutput(uint64Amounts[i], addr)
+		vout, err := NewTxOutput(uint64Amounts[i], addr)
 		if err != nil {
 			log.Fatal("create tx vout failed:", err)
 		}
@@ -235,26 +216,22 @@ func (c *HttpClient) send(from, to, amount string, fee uint64) {
 		addrs := mgr.Addresses()
 		rand.Seed(time.Now().UnixNano())
 		addr := addrs[rand.Intn(len(addrs))] // 找零地址
-		vout, err := blc.NewTxOutput(inputAmount-(outputAmount+fee), addr)
+		vout, err := NewTxOutput(inputAmount-(outputAmount+fee), addr)
 		if err != nil {
 			log.Fatal("create tx vout failed:", err)
 		}
 		vouts = append(vouts, *vout)
 	}
 
-	tx, err := blc.NewTransaction(vins, vouts)
+	tx, err := NewTransaction(vins, vouts)
 	if err != nil {
 		log.Fatal("create transaction failed:", err)
 	}
 
-	if false == c.postTx(tx) {
-		log.Fatal("交易提交失败")
-	}
-
-	log.Info("交易提交成功")
+	c.postTx(tx)
 }
 
-func (c *HttpClient) printAllBalance() {
+func (c *rpcClient) printAllBalance() {
 	mgr := walletmgr.New()
 	info := map[string]uint64{}
 	total := uint64(0)
@@ -269,20 +246,26 @@ func (c *HttpClient) printAllBalance() {
 	}
 }
 
-func (c *HttpClient) printBalance(address string) {
+func (c *rpcClient) printBalance(address string) {
 	log.Info("balance: ", c.getBalance(address))
 }
 
-func (c *HttpClient) printTxPool() {
-	data, err := c.Get("/txPool", []byte{})
-	if err != nil {
+func (c *rpcClient) printTxPool() {
+	var poolData []byte
+	c.call(func(client pb.ApiClient) {
+		resp, err := client.GetTxPool(context.Background(), &pb.Empty{})
+		if err != nil {
+			log.Fatal("rpc error: ", err)
+		}
+		poolData = resp.TxPool
+	})
+
+	pool := TxPool{}
+	if err := json.Unmarshal(poolData, &pool); err != nil {
 		log.Fatal(err)
 	}
-	pool := blc.TxPool{}
-	if err = json.Unmarshal(data, &pool); err != nil {
-		log.Fatal(err)
-	}
-	pool.Traverse(func(fee uint64, tx *blc.Transaction) bool {
+
+	pool.Traverse(func(fee uint64, tx *Transaction) bool {
 		fmt.Printf("\tfee: %d\n", fee)
 		fmt.Printf("\ttxHash: %x\n", tx.Hash)
 		fmt.Printf("\ttime: %d\n", tx.Time)
@@ -309,11 +292,11 @@ func (c *HttpClient) printTxPool() {
 	})
 }
 
-func (c *HttpClient) printHeight() {
+func (c *rpcClient) printHeight() {
 	log.Info("height: ", c.getHeight())
 }
 
-func (c *HttpClient) printChain() {
+func (c *rpcClient) printChain() {
 	height := c.getHeight()
 	log.Info("blockchain height: ", height)
 	blocks := c.getBlocks(0, height)
@@ -351,7 +334,7 @@ func (c *HttpClient) printChain() {
 	}
 }
 
-func (c *HttpClient) printAddresses() {
+func (c *rpcClient) printAddresses() {
 	mgr := walletmgr.New()
 	fmt.Println("地址列表：")
 	for _, address := range mgr.Addresses() {
@@ -359,7 +342,7 @@ func (c *HttpClient) printAddresses() {
 	}
 }
 
-func (c *HttpClient) removeWallet(address string) {
+func (c *rpcClient) removeWallet(address string) {
 	mgr := walletmgr.New()
 	err := mgr.RemoveWallet(address)
 	if err != nil {
@@ -369,7 +352,7 @@ func (c *HttpClient) removeWallet(address string) {
 	log.Info("remove wallet success")
 }
 
-func (c *HttpClient) createWallet() {
+func (c *rpcClient) createWallet() {
 	mgr := walletmgr.New()
 	w, err := mgr.CreateWallet()
 	if err != nil {
@@ -378,167 +361,141 @@ func (c *HttpClient) createWallet() {
 	log.Infof("create wallet success, address=%s", w.GetAddress())
 }
 
-func (c *HttpClient) postTx(tx *blc.Transaction) bool {
-	data, err := tx.Marshal()
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	_, err = c.Post("/tx", data)
-	if err != nil {
-		log.Error(err)
-		return false
-	}
-
-	return true
+func (c *rpcClient) postTx(tx *Transaction) {
+	c.call(func(client pb.ApiClient) {
+		ins := make([]pb.TxInput, 0)
+		for _, in := range tx.Vins {
+			ins = append(ins, pb.TxInput{
+				TxId:             in.TxId[:],
+				Vout:             in.Vout,
+				ScriptSig:        in.ScriptSig,
+				CoinbaseDataSize: int32(in.CoinbaseDataSize),
+				CoinbaseData:     in.CoinbaseData,
+			})
+		}
+		outs := make([]pb.TxOutput, 0)
+		for _, out := range tx.Vouts {
+			outs = append(outs, pb.TxOutput{
+				Value:        out.Value,
+				Address:      out.Address,
+				ScriptPubKey: out.ScriptPubKey,
+			})
+		}
+		req := &pb.PostTxReq{
+			Tx: pb.Transaction{
+				Hash:      tx.Hash[:],
+				Ins:       ins,
+				Outs:      outs,
+				Timestamp: tx.Time,
+			},
+		}
+		_, err := client.PostTx(context.Background(), req)
+		if err != nil {
+			log.Fatal("交易提交失败:", err)
+		}
+		log.Info("交易提交成功")
+	})
 }
 
-func (c *HttpClient) getUtxo(address string) map[[32]byte]map[int]*blc.TxOutput {
-	type Request struct {
-		Address string `json:"address"`
-	}
-	req := Request{Address: address}
-	data, err := json.Marshal(req)
-	if err != nil {
-		log.Fatal(err)
-	}
+func (c *rpcClient) getUtxo(address string) map[[32]byte]map[int]*TxOutput {
+	var utxos []pb.UTXO
+	c.call(func(client pb.ApiClient) {
+		resp, err := client.GetUTXO(context.Background(), &pb.GetUTXOReq{Address: address})
+		if err != nil {
+			log.Fatal("rpc error ", err)
+		}
+		utxos = resp.Utxos
+	})
 
-	body, err := c.Get("/utxo", data)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	type Utxo struct {
-		TxHash [32]byte
-		Index  int
-		TxOut  blc.TxOutput
-	}
-	utxoes := make([]Utxo, 0)
-
-	if err = json.Unmarshal(body, &utxoes); err != nil {
-		log.Fatal(err)
-	}
-
-	if len(utxoes) == 0 {
+	if len(utxos) == 0 {
 		return nil
 	}
 
-	ret := map[[32]byte]map[int]*blc.TxOutput{}
-	for _, utxo := range utxoes {
-		if _, ok := ret[utxo.TxHash]; !ok {
-			ret[utxo.TxHash] = map[int]*blc.TxOutput{}
+	mp := map[[32]byte]map[int]*TxOutput{}
+	for _, utxo := range utxos {
+		hash, err := BytesToByte32(utxo.TxHash)
+		if err != nil {
+			log.Fatal(err)
 		}
-		ret[utxo.TxHash][utxo.Index] = &utxo.TxOut
+		if _, ok := mp[hash]; !ok {
+			mp[hash] = map[int]*TxOutput{}
+		}
+		mp[hash][int(utxo.Index)] = &TxOutput{
+			Value:        utxo.TxOut.Value,
+			Address:      utxo.TxOut.Address,
+			ScriptPubKey: utxo.TxOut.ScriptPubKey,
+		}
 	}
 
-	return ret
+	return mp
 }
 
-func (c *HttpClient) getBalance(address string) uint64 {
-	type Request struct {
-		Address string `json:"address"`
-	}
-	req := Request{Address: address}
-	data, err := json.Marshal(req)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	body, err := c.Get("/balance", data)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	type Response struct {
-		Balance uint64 `json:"balance"`
-	}
-	resp := Response{}
-	if err = json.Unmarshal(body, &resp); err != nil {
-		log.Fatal(err)
-	}
-
-	return resp.Balance
+func (c *rpcClient) getBalance(address string) uint64 {
+	var balance uint64
+	c.call(func(client pb.ApiClient) {
+		resp, err := client.GetBalance(context.Background(), &pb.GetBalanceReq{Address: address})
+		if err != nil {
+			log.Fatal("rpc error: ", err)
+		}
+		balance = resp.Balance
+	})
+	return balance
 }
 
-func (c *HttpClient) getBlocks(start, end uint64) []blc.Block {
-	type Request struct {
-		Start uint64 `json:"start"`
-		End   uint64 `json:"end"`
-	}
-	req := Request{Start: start, End: end}
-	data, _ := json.Marshal(req)
+func (c *rpcClient) getBlocks(start, end uint64) []Block {
+	var data []byte
+	c.call(func(client pb.ApiClient) {
+		resp, err := client.GetBlocks(context.Background(), &pb.GetBlocksReq{
+			StartHeight: start,
+			EndHeight:   end,
+		})
+		if err != nil {
+			log.Fatal("rpc error ", err)
+		}
+		data = resp.Blocks
+	})
 
-	body, err := c.Get("/blocks", data)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	type Response struct {
-		Blocks []blc.Block `json:"blocks"`
-	}
-	resp := Response{}
-	if err = json.Unmarshal(body, &resp); err != nil {
-		log.Fatal(err)
+	blocks := make([]Block, 0)
+	if err := json.Unmarshal(data, &blocks); err != nil {
+		log.Fatal("json unmarshal ", err)
 	}
 
-	return resp.Blocks
+	return blocks
 }
 
-func (c *HttpClient) getHeight() uint64 {
-	data, err := c.Get("/height", []byte{})
-	if err != nil {
-		log.Fatal(err)
-	}
-	type Response struct {
-		Height uint64 `json:"height"`
-	}
-	resp := Response{}
-	if err = json.Unmarshal(data, &resp); err != nil {
-		log.Fatal(err)
-	}
-	return resp.Height
+func (c *rpcClient) getHeight() uint64 {
+	var height uint64
+	c.call(func(client pb.ApiClient) {
+		resp, err := client.GetHeight(context.Background(), &pb.Empty{})
+		if err != nil {
+			log.Fatal("rpc error ", err)
+		}
+		height = resp.Height
+	})
+	return height
 }
 
-func (c *HttpClient) Url(route string) string {
-	url := fmt.Sprintf("%s%s", c.baseUrl, route)
-	return url
+func (c *rpcClient) call(f func(client pb.ApiClient)) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*3)
+	defer cancel()
+	dialOpts := []grpc.DialOption{
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithBlock(),
+	}
+	cc, err := grpc.DialContext(ctx, c.address, dialOpts...)
+	if err != nil {
+		log.Fatalf("dial error: %+v", err)
+	}
+	defer cc.Close()
+	f(pb.NewApiClient(cc))
 }
 
-func (c *HttpClient) Get(route string, body []byte) ([]byte, error) {
-	req, err := http.NewRequest("GET", c.Url(route), bytes.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("create get request failed:%v", err)
+func parseCommand(f *flag.FlagSet) bool {
+	if err := f.Parse(os.Args[2:]); err != nil {
+		log.Fatal("parse command failed!")
 	}
-	req.Header.Set("Content-Type", "application/json")
-
-	return c.Do(req)
-}
-
-func (c *HttpClient) Post(route string, body []byte) ([]byte, error) {
-	req, err := http.NewRequest("POST", c.Url(route), bytes.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("create post request failed:%v", err)
+	if f.Parsed() {
+		return true
 	}
-	req.Header.Set("Content-Type", "application/json")
-
-	return c.Do(req)
-}
-
-func (c *HttpClient) Do(req *http.Request) ([]byte, error) {
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("get failed: %v", err)
-	}
-
-	b, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read resp body failed:%v", err)
-	}
-	_ = resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("status code:%d body:%s", resp.StatusCode, string(b))
-	}
-
-	return b, nil
+	return false
 }

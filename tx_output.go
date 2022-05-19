@@ -2,7 +2,7 @@ package blc
 
 import (
 	"fmt"
-	"github.com/treeforest/easyblc/internal/blc/script"
+	"github.com/treeforest/easyblc/script"
 )
 
 type TxOutput struct {

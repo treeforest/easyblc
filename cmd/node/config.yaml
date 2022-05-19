@@ -1,20 +1,22 @@
 port: 3006
 
+endpoint: localhost:3006
+
 # 0: 全节点 1: 矿工节点 2: SPV
 type: 0
 
-# 矿工地址
-address: 1QCZvtyk5YeqxXVuqDZNa9toxiP1icDW1f
+# 区块链数据库存储位置
+dbpath: ../blockchain
+
+# 启动时连接的节点地址
+bootstrapPeers:
+#- 172.26.240.1:3007
+
+# 获取挖矿奖励的地址
+rewardAddress: 1QCZvtyk5YeqxXVuqDZNa9toxiP1icDW1f
 
 # 矿工使用,默认为0。标识间隔多少个区块的时候开始同步（矿工可以选择继续挖自己的分叉链，如果有几率追上最长链）
-syncinterval: 1
-
-# 区块链数据库存储位置
-dbpath: ../leveldb
-
-# 已存在的节点地址
-existing:
-  #- 172.26.240.1:3007
+syncInterval: 3
 
 # http server 端口
-httpserverport: 5999
+httpServerPort: 5999

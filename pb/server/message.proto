@@ -1,9 +1,9 @@
 syntax = "proto3";
 
-option go_package = ".;p2p";
+option go_package = ".;pb";
 
 // gogo proto
-import "gogoproto/gogo.pb";
+import "gogoproto/gogo.proto";
 option (gogoproto.gostring_all) = true;
 option (gogoproto.equal_all) = true;
 option (gogoproto.verbose_equal_all) = true;

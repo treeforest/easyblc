@@ -17,6 +17,6 @@ func main() {
 	server := blc.NewHttpServer(conf.HttpServerPort, chain)
 	go server.Run()
 
-	node := blc.NewP2PServer(conf, chain)
+	node := blc.NewServer(conf, chain)
 	node.Run()
 }

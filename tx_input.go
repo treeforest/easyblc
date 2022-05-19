@@ -3,7 +3,7 @@ package blc
 import (
 	"crypto/ecdsa"
 	"fmt"
-	"github.com/treeforest/easyblc/internal/blc/script"
+	"github.com/treeforest/easyblc/script"
 )
 
 type TxInput struct {

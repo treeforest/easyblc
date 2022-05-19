@@ -3,11 +3,10 @@ package blc
 import (
 	"bytes"
 	"context"
-	"github.com/pkg/errors"
 	"fmt"
-	"github.com/treeforest/easyblc/internal/blc/dao"
-	"github.com/treeforest/easyblc/internal/blc/script"
-	"github.com/treeforest/easyblc/pkg/utils"
+	"github.com/pkg/errors"
+	"github.com/treeforest/easyblc/dao"
+	"github.com/treeforest/easyblc/script"
 	log "github.com/treeforest/logger"
 	"math/big"
 	"sync"
@@ -82,7 +81,7 @@ func CreateBlockChainWithGenesisBlock(dbPath, address string) *BlockChain {
 }
 
 func (chain *BlockChain) MineGenesisBlock(ctx context.Context, address string) {
-	if !utils.IsValidAddress(address) {
+	if !IsValidAddress(address) {
 		log.Fatalf("invalid address: %s", address)
 	}
 
@@ -425,7 +424,7 @@ func (chain *BlockChain) IsValidTx(tx *Transaction) (uint64, bool) {
 
 	for _, vout := range tx.Vouts {
 		// 是否为有效的地址
-		if !utils.IsValidAddress(vout.Address) {
+		if !IsValidAddress(vout.Address) {
 			log.Debug("invalid output address")
 			return 0, false
 		}

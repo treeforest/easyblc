@@ -1,9 +1,9 @@
 package blc
 
 import (
-	"github.com/pkg/errors"
 	"context"
 	"crypto/sha256"
+	"github.com/pkg/errors"
 	log "github.com/treeforest/logger"
 	"math"
 	"math/big"

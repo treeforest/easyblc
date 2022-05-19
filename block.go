@@ -6,7 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
-	"github.com/treeforest/easyblc/pkg/merkle"
+	"github.com/treeforest/easyblc/merkle"
 	log "github.com/treeforest/logger"
 	"strconv"
 	"time"

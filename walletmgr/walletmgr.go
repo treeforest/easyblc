@@ -6,7 +6,7 @@ import (
 	"encoding/gob"
 	"errors"
 	"fmt"
-	"github.com/treeforest/easyblc/internal/blc/walletmgr/wallet"
+	"github.com/treeforest/easyblc/walletmgr/wallet"
 	"io/ioutil"
 	"log"
 	"os"
