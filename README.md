@@ -38,7 +38,7 @@ address: 1QCZvtyk5YeqxXVuqDZNa9toxiP1icDW1f
 syncinterval: 1
 
 # 区块链数据库存储位置
-dbpath: ../leveldb
+dbpath: ../blc
 
 # 已存在的节点地址
 existing:

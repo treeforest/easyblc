@@ -13,7 +13,7 @@ func main() {
 	if err != nil {
 		log.Fatal("load config failed")
 	}
-	// _ = os.RemoveAll("BLC")
+	// _ = os.RemoveAll("blc.db")
 	chain := blc.GetBlockChain(conf.DBPath)
 
 	httpSrv := blc.NewHttpServer(conf.HttpServerPort, chain)
@@ -22,6 +22,6 @@ func main() {
 	//rpcSrv := blc.RunRpcSerer(conf.HttpServerPort+1, chain)
 	//defer rpcSrv.Stop()
 
-	peer := blc.NewServer(conf, chain)
+	peer := blc.NewServer(log.INFO, conf, chain)
 	peer.Run()
 }

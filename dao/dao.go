@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	dbName               = "BLC"                       // 数据库名
+	dbName               = "blc.db"                    // 数据库名
 	latestBlockHashKey   = "__latest_block_hash_key__" // 最新区块哈希对应的key
 	latestBlockHeightKey = "__latest_block_height_key__"
 	heightPrefix         = "__block_height__"
@@ -34,7 +34,7 @@ func New(dbPath string) *DAO {
 	log.Debug("db path:", filepath.Join(dbPath, dbName))
 	levelDB, err := leveldb.OpenFile(filepath.Join(dbPath, dbName), &opt.Options{})
 	if err != nil {
-		log.Fatalf("open leveldb [%s] error [%v]", dbName, err)
+		log.Fatalf("open blc [%s] error [%v]", dbName, err)
 	}
 	d := &DAO{DB: levelDB, latestBlockHash: nil, latestBlockHeight: 0}
 	return d

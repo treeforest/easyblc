@@ -42,11 +42,11 @@ type Server struct {
 	stopOnce        sync.Once
 }
 
-func NewServer(conf *config.Config, chain *BlockChain) *Server {
+func NewServer(logLevel log.Level, conf *config.Config, chain *BlockChain) *Server {
 	id := uuid.NewString()
 
 	server := &Server{
-		l:               log.NewStdLogger(log.WithPrefix("server"), log.WithLevel(log.DEBUG)),
+		l:               log.NewStdLogger(log.WithPrefix("server"), log.WithLevel(logLevel)),
 		Id:              id,
 		broadcasts:      make([][]byte, 1024),
 		chain:           chain,
@@ -135,7 +135,7 @@ func (s *Server) GetBroadcasts() (data [][]byte) {
 
 // GetPullRequest 返回 pull 请求时所携带的信息。
 func (s *Server) GetPullRequest() (req []byte) {
-	s.l.Debug("summary")
+	s.l.Debug("get pull request")
 	txHashMap := s.getPullRequestTxsMap()
 	blockStart, blockHashes := s.getPullRequestBlocksSlice()
 	msg := &pb.Message{
@@ -154,7 +154,7 @@ func (s *Server) GetPullRequest() (req []byte) {
 
 // ProcessPullRequest 处理pull请求，并返回结果。
 func (s *Server) ProcessPullRequest(req []byte) (resp []byte) {
-	s.l.Debug("local state")
+	s.l.Debug("process pull request")
 
 	msg := &pb.Message{}
 	if err := msg.Unmarshal(req); err != nil {
@@ -188,7 +188,7 @@ func (s *Server) ProcessPullRequest(req []byte) (resp []byte) {
 
 // ProcessPullResponse 合并远程节点返回的状态信息。
 func (s *Server) ProcessPullResponse(resp []byte) {
-	s.l.Debug("merge remote state")
+	s.l.Debug("process pull response")
 
 	msg := &pb.Message{}
 	if err := msg.Unmarshal(resp); err != nil {
