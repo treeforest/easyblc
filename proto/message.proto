@@ -1,6 +1,6 @@
 syntax = "proto3";
 
-option go_package = ".;pb";
+option go_package = ".;proto";
 
 // gogo proto
 import "gogoproto/gogo.proto";
@@ -11,8 +11,6 @@ option (gogoproto.marshaler_all) = true;
 option (gogoproto.sizer_all) = true;
 option (gogoproto.unmarshaler_all) = true;
 option (gogoproto.goproto_getters_all) = false;
-
-import "common.proto";
 
 enum NodeType {
   Full = 0;
@@ -29,15 +27,17 @@ message Message {
     // 广播新的交易
     TxMessage tx = 4;
     // 广播新的区块
-    Envelope block = 5;
+    Block block = 5;
   }
 }
 
 message PullRequest {
   uint64 block_start = 1;
   repeated bytes block_hashes = 2;
-  map<string, Empty> tx_hashes = 3[(gogoproto.nullable) = false];
+  map<string, Value> tx_hashes = 3[(gogoproto.nullable) = false];
 }
+
+message Value {}
 
 message PullResponse {
   repeated bytes blocks = 1;
@@ -49,6 +49,6 @@ message TxMessage {
   bytes data = 2;
 }
 
-message Envelope {
+message Block {
   bytes payload = 1;
 }

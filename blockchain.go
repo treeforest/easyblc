@@ -43,7 +43,13 @@ func MustGetExistBlockChain(dbPath string) *BlockChain {
 	}
 	d, err := dao.Load(dbPath)
 	if err != nil {
-		log.Fatal("load block database failed: ", err)
+		log.Warnf("load block database failed: ", err)
+		return &BlockChain{
+			dao:         d,
+			utxoSet:     NewUTXOSet(),
+			txPool:      NewTxPool(),
+			latestBlock: nil,
+		}
 	}
 	blc := &BlockChain{
 		dao:    d,
@@ -52,12 +58,12 @@ func MustGetExistBlockChain(dbPath string) *BlockChain {
 
 	err = blc.updateUTXOSet()
 	if err != nil {
-		log.Fatal("find utxo set failed:", err)
+		log.Warn("update utxo set failed:", err)
 	}
 
 	err = blc.loadLatestBlock()
 	if err != nil {
-		log.Fatal("local latest block failed:", err)
+		log.Fatal("load latest block failed:", err)
 	}
 
 	return blc
@@ -93,12 +99,13 @@ func (chain *BlockChain) MineGenesisBlock(ctx context.Context, address string) {
 
 	block, succ := CreateGenesisBlock(ctx, []Transaction{*coinbaseTx})
 	if !succ {
-		log.Fatal("create Genesis Block failed")
+		log.Warn("create genesis block failed")
+		return
 	}
 
 	err = chain.AddBlock(block)
 	if err != nil {
-		log.Fatal("add block to chain failed:", err)
+		log.Error("add genesis block to chain failed:", err)
 	}
 }
 
@@ -119,9 +126,14 @@ func (chain *BlockChain) loadLatestBlock() error {
 }
 
 func (chain *BlockChain) AddBlock(block *Block) error {
-	preBlock, err := chain.GetAncestor(block.Height - 1)
-	if err != nil {
-		return errors.WithStack(err)
+	var preBlock *Block = nil
+
+	if block.Height > 0 {
+		var err error
+		preBlock, err = chain.GetAncestor(block.Height - 1)
+		if err != nil {
+			return errors.WithStack(err)
+		}
 	}
 
 	// 验证区块合法性
@@ -157,7 +169,7 @@ func (chain *BlockChain) AddBlock(block *Block) error {
 }
 
 func (chain *BlockChain) VerifyBlock(preBlock, block *Block) bool {
-	if preBlock == nil || block == nil {
+	if block == nil {
 		return false
 	}
 
@@ -175,6 +187,10 @@ func (chain *BlockChain) VerifyBlock(preBlock, block *Block) bool {
 		return true
 	}
 
+	if preBlock == nil {
+		return false
+	}
+
 	// 1、检查hash
 	hashBytes := block.CalculateHash()
 	if hashBytes != block.Hash {
@@ -183,7 +199,7 @@ func (chain *BlockChain) VerifyBlock(preBlock, block *Block) bool {
 	}
 
 	// 2、检查难度目标值
-	nBits, err := chain.GetWorkRequired(block.Height)
+	nBits, err := chain.GetWorkRequired(preBlock, block)
 	if err != nil {
 		log.Warn("get work required failed:", err)
 		return false
@@ -202,10 +218,6 @@ func (chain *BlockChain) VerifyBlock(preBlock, block *Block) bool {
 	}
 
 	// 4、检查前preHash
-	//preBlock, err := chain.GetAncestor(block.Height - 1)
-	//if err != nil {
-	//	return false
-	//}
 	if block.PreHash != preBlock.Hash {
 		return false
 	}
@@ -450,6 +462,13 @@ func (chain *BlockChain) IsValidTx(tx *Transaction) (uint64, bool) {
 
 // RemoveBlockFrom 移除区块高度及往后的区块，当产生分叉，需要合并链时调用
 func (chain *BlockChain) RemoveBlockFrom(start uint64) error {
+	if chain.GetLatestBlock() == nil {
+		if start == 0 {
+			return nil
+		}
+		return errors.New("no blocks")
+	}
+
 	height := chain.GetLatestBlock().Height
 	if start < 0 || start > height {
 		return nil
@@ -474,6 +493,10 @@ func (chain *BlockChain) RemoveBlockFrom(start uint64) error {
 	}
 
 	return nil
+}
+
+func (chain *BlockChain) GetBlockHash(height uint64) ([]byte, error) {
+	return chain.dao.GetBlockHash(height)
 }
 
 func (chain *BlockChain) GetBlock(height uint64) (*Block, error) {

@@ -7,6 +7,8 @@ import (
 )
 
 func main() {
+	log.SetLevel(log.DEBUG)
+
 	conf, err := config.Load()
 	if err != nil {
 		log.Fatal("load config failed")
@@ -17,8 +19,8 @@ func main() {
 	httpSrv := blc.NewHttpServer(conf.HttpServerPort, chain)
 	go httpSrv.Run()
 
-	rpcSrv := blc.RunRpcSerer(conf.HttpServerPort+1, chain)
-	defer rpcSrv.Stop()
+	//rpcSrv := blc.RunRpcSerer(conf.HttpServerPort+1, chain)
+	//defer rpcSrv.Stop()
 
 	peer := blc.NewServer(conf, chain)
 	peer.Run()

@@ -49,6 +49,8 @@ func Load(dbPath string) (o *DAO, err error) {
 
 // loadLatestBlockHash load the latest block hash
 func (o *DAO) loadLatestBlockHash() error {
+	o.latestBlockHash = nil
+	o.latestBlockHeight = 0
 	return o.DoTransaction(func(trans *leveldb.Transaction) error {
 		ro := &opt.ReadOptions{DontFillCache: false}
 		value, err := o.DB.Get([]byte(latestBlockHashKey), ro)
@@ -99,7 +101,7 @@ func (o *DAO) GetBlockByHeight(height uint64) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("get block hash failed:%v", err)
 	}
-	return o.DB.Get(hash, nil)
+	return o.GetBlock(hash)
 }
 
 func (o *DAO) AddBlock(height uint64, hash [32]byte, block []byte) error {
@@ -111,14 +113,14 @@ func (o *DAO) AddBlock(height uint64, hash [32]byte, block []byte) error {
 			return fmt.Errorf("intsert block failed: %v", err)
 		}
 
-		err = trans.Put([]byte(latestBlockHashKey), hash[:], wo)
-		if err != nil {
-			return fmt.Errorf("update latest block hash failed: %v", err)
-		}
-
 		err = trans.Put(o.keyHeight(height), hash[:], wo)
 		if err != nil {
 			return fmt.Errorf("intsert block height-hash failed: %v", err)
+		}
+
+		err = trans.Put([]byte(latestBlockHashKey), hash[:], wo)
+		if err != nil {
+			return fmt.Errorf("update latest block hash failed: %v", err)
 		}
 
 		err = trans.Put([]byte(latestBlockHeightKey), []byte(strconv.FormatUint(height, 10)), wo)
@@ -138,23 +140,45 @@ func (o *DAO) RemoveLatestBlock() error {
 		return nil
 	}
 	return o.DoTransaction(func(trans *leveldb.Transaction) error {
-		err := trans.Delete(o.keyHeight(o.latestBlockHeight), nil)
-		if err != nil {
-			return fmt.Errorf("delete latest block hash failed: %v", err)
-		}
-
-		err = trans.Delete(o.latestBlockHash, nil)
+		err := trans.Delete(o.latestBlockHash, nil)
 		if err != nil {
 			return fmt.Errorf("delete latest block failed: %v", err)
 		}
 
+		err = trans.Delete(o.keyHeight(o.latestBlockHeight), nil)
+		if err != nil {
+			return fmt.Errorf("delete latest block hash failed: %v", err)
+		}
+
 		if o.latestBlockHeight == 0 {
+			err = trans.Delete([]byte(latestBlockHashKey), nil)
+			if err != nil {
+				return err
+			}
+
+			err = trans.Delete([]byte(latestBlockHeightKey), nil)
+			if err != nil {
+				return err
+			}
+
+			o.latestBlockHash = nil
+			o.latestBlockHeight = 0
 			return nil
 		}
 
 		latestBlockHash, err := trans.Get(o.keyHeight(o.latestBlockHeight-1), nil)
 		if err != nil {
 			return fmt.Errorf("get latest block hash failed: %v", err)
+		}
+
+		err = trans.Put([]byte(latestBlockHashKey), latestBlockHash[:], nil)
+		if err != nil {
+			return fmt.Errorf("put latest block hash failed: %v", err)
+		}
+
+		err = trans.Put([]byte(latestBlockHeightKey), []byte(strconv.FormatUint(o.latestBlockHeight-1, 10)), nil)
+		if err != nil {
+			return fmt.Errorf("put latest block height failed: %v", err)
 		}
 
 		o.latestBlockHash = latestBlockHash

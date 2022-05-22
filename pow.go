@@ -3,7 +3,7 @@ package blc
 import (
 	"context"
 	"crypto/sha256"
-	"github.com/pkg/errors"
+	"errors"
 	log "github.com/treeforest/logger"
 	"math"
 	"math/big"
@@ -111,13 +111,22 @@ var (
 )
 
 // GetWorkRequired 获取指定区块高度的目标难度值
-func (chain *BlockChain) GetWorkRequired(height uint64) (uint32, error) {
-	preBlock, err := chain.GetBlock(height - 1)
-	if err != nil {
-		return 0, errors.WithStack(err)
+func (chain *BlockChain) GetWorkRequired(preBlock, block *Block) (uint32, error) {
+	if preBlock == nil {
+		if block == nil {
+			return 0, errors.New("preBlock and block is nil")
+		}
+		if block.Height == 0 {
+			return 0x1d00ffff, nil
+		}
+		return 0, errors.New("illegal block")
 	}
 
-	if height%DifficultyAdjustmentInterval != 0 {
+	if preBlock.Height != block.Height-1 {
+		return 0, errors.New("illegal preBlock")
+	}
+
+	if block.Height%DifficultyAdjustmentInterval != 0 {
 		// 不需要难度调整，使用上一个区块的难度值
 		return preBlock.Bits, nil
 	}

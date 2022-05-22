@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	pb "github.com/treeforest/easyblc/pb"
+	pb "github.com/treeforest/easyblc/proto"
 	"github.com/treeforest/easyblc/walletmgr"
 	log "github.com/treeforest/logger"
 	"google.golang.org/grpc"
@@ -253,7 +253,7 @@ func (c *rpcClient) printBalance(address string) {
 func (c *rpcClient) printTxPool() {
 	var poolData []byte
 	c.call(func(client pb.ApiClient) {
-		resp, err := client.GetTxPool(context.Background(), &pb.Empty{})
+		resp, err := client.GetTxPool(context.Background(), &pb.GetTxPoolReq{})
 		if err != nil {
 			log.Fatal("rpc error: ", err)
 		}
@@ -466,7 +466,7 @@ func (c *rpcClient) getBlocks(start, end uint64) []Block {
 func (c *rpcClient) getHeight() uint64 {
 	var height uint64
 	c.call(func(client pb.ApiClient) {
-		resp, err := client.GetHeight(context.Background(), &pb.Empty{})
+		resp, err := client.GetHeight(context.Background(), &pb.GetHeightReq{})
 		if err != nil {
 			log.Fatal("rpc error ", err)
 		}

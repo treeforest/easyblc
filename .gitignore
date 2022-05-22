@@ -2,4 +2,5 @@ vendor/
 .idea/
 cmd/leveldb/
 cmd/client/wallets.bat
+cmd/peer/peer.exe
 cmd/test/

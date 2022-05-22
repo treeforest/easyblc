@@ -1,6 +1,6 @@
 syntax = "proto3";
 
-option go_package = ".;pb";
+option go_package = ".;proto";
 
 // gogo proto
 import "gogoproto/gogo.proto";
@@ -12,11 +12,9 @@ option (gogoproto.sizer_all) = true;
 option (gogoproto.unmarshaler_all) = true;
 option (gogoproto.goproto_getters_all) = false;
 
-import "common.proto";
-
 service Api {
   // GetHeight 获取区块高度
-  rpc GetHeight(Empty) returns (GetHeightResp) {}
+  rpc GetHeight(GetHeightReq) returns (GetHeightResp) {}
   // GetBlocks 获取指定范围内的区块
   rpc GetBlocks(GetBlocksReq) returns (GetBlocksResp) {}
   // GetBalance 获取指定地址的余额
@@ -24,9 +22,9 @@ service Api {
   // GetUTXO 获取指定地址的未花费输出
   rpc GetUTXO(GetUTXOReq) returns (GetUTXOResp) {}
   // GetTxPool 返回交易池对象
-  rpc GetTxPool(Empty) returns (GetTxPoolResp) {}
+  rpc GetTxPool(GetTxPoolReq) returns (GetTxPoolResp) {}
   // PostTxReq 发起交易
-  rpc PostTx(PostTxReq) returns (Empty) {}
+  rpc PostTx(PostTxReq) returns (PostTxResp) {}
 }
 
 message TxInput {
@@ -62,6 +60,7 @@ message Transaction {
   int64 timestamp = 4;
 }
 
+message GetHeightReq {}
 message GetHeightResp {uint64 height = 1;}
 
 message GetBlocksReq {
@@ -81,8 +80,10 @@ message UTXO {
 }
 message GetUTXOResp{repeated UTXO utxos = 1[(gogoproto.nullable) = false];}
 
+message GetTxPoolReq {}
 message GetTxPoolResp {bytes tx_pool = 1;}
 
 message SubmitReq{}
 
 message PostTxReq {Transaction tx = 1[(gogoproto.nullable) = false];}
+message PostTxResp {}

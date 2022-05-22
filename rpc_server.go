@@ -5,11 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	log "github.com/treeforest/logger"
 	"net"
 	"sync"
 	"time"
 
-	pb "github.com/treeforest/easyblc/pb"
+	pb "github.com/treeforest/easyblc/proto"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
@@ -33,11 +34,17 @@ func RunRpcSerer(port int, chain *BlockChain) *rpcServer {
 		panic(err)
 	}
 
+	c := make(chan struct{}, 1)
+
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
+		log.Info("rpc server listen at ", lis.Addr().String())
+		c <- struct{}{}
 		_ = gSrv.Serve(lis)
 	}()
+
+	<-c
 
 	return s
 }
@@ -56,7 +63,7 @@ func (s *rpcServer) Stop() {
 	})
 }
 
-func (s *rpcServer) GetHeight(ctx context.Context, req *pb.Empty) (*pb.GetHeightResp, error) {
+func (s *rpcServer) GetHeight(ctx context.Context, req *pb.GetHeightReq) (*pb.GetHeightResp, error) {
 	if s.chain.GetLatestBlock() == nil {
 		return nil, errors.New("no block")
 	}
@@ -96,23 +103,23 @@ func (s *rpcServer) GetUTXO(ctx context.Context, req *pb.GetUTXOReq) (*pb.GetUTX
 	return &pb.GetUTXOResp{Utxos: utxoes}, nil
 }
 
-func (s *rpcServer) GetTxPool(context.Context, *pb.Empty) (*pb.GetTxPoolResp, error) {
+func (s *rpcServer) GetTxPool(context.Context, *pb.GetTxPoolReq) (*pb.GetTxPoolResp, error) {
 	pool, _ := s.chain.GetTxPool().Marshal()
 	return &pb.GetTxPoolResp{TxPool: pool}, nil
 }
 
-func (s *rpcServer) PostTx(ctx context.Context, req *pb.PostTxReq) (*pb.Empty, error) {
+func (s *rpcServer) PostTx(ctx context.Context, req *pb.PostTxReq) (*pb.PostTxResp, error) {
 	hash, err := BytesToByte32(req.Tx.Hash)
 	if err != nil {
-		return &pb.Empty{}, errors.New("format error")
+		return &pb.PostTxResp{}, errors.New("format error")
 	}
 
 	if len(req.Tx.Ins) == 0 || len(req.Tx.Outs) == 0 {
-		return &pb.Empty{}, errors.New("format error")
+		return &pb.PostTxResp{}, errors.New("format error")
 	}
 
 	if time.Now().UnixNano() > req.Tx.Timestamp {
-		return &pb.Empty{}, errors.New("timestamp error")
+		return &pb.PostTxResp{}, errors.New("timestamp error")
 	}
 
 	vins := make([]TxInput, 0)
@@ -121,7 +128,7 @@ func (s *rpcServer) PostTx(ctx context.Context, req *pb.PostTxReq) (*pb.Empty, e
 	for _, in := range req.Tx.Ins {
 		txid, err := BytesToByte32(in.TxId)
 		if err != nil {
-			return &pb.Empty{}, errors.New("format error")
+			return &pb.PostTxResp{}, errors.New("format error")
 		}
 		vins = append(vins, TxInput{
 			TxId:             txid,
@@ -147,5 +154,5 @@ func (s *rpcServer) PostTx(ctx context.Context, req *pb.PostTxReq) (*pb.Empty, e
 	}
 
 	err = s.chain.AddToTxPool(tx)
-	return &pb.Empty{}, err
+	return &pb.PostTxResp{}, err
 }

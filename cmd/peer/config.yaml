@@ -3,7 +3,7 @@ port: 3006
 endpoint: localhost:3006
 
 # 0: 全节点 1: 矿工节点 2: SPV
-type: 0
+type: 1
 
 # 区块链数据库存储位置
 dbpath: ../leveldb

@@ -3,7 +3,7 @@ package script
 import (
 	"crypto/sha256"
 	"github.com/stretchr/testify/require"
-	"github.com/treeforest/easyblc/internal/blc/walletmgr/wallet"
+	"github.com/treeforest/easyblc/walletmgr/wallet"
 	"testing"
 )
 

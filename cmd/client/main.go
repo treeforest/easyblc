@@ -1,8 +1,8 @@
 package main
 
-import "github.com/treeforest/easyblc/internal/client"
+import "github.com/treeforest/easyblc"
 
 func main() {
-	cli := client.NewHttpClient()
+	cli := blc.NewRpcClient("")
 	cli.Run()
 }

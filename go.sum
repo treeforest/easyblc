@@ -111,10 +111,10 @@ github.com/stretchr/testify v1.7.1 h1:5TQK59W5E3v0r2duFAb7P95B6hEeOyEnHRa8MjYSMT
 github.com/stretchr/testify v1.7.1/go.mod h1:6Fq8oRcR53rry900zMqJjRRixrwX3KX962/h/Wwjteg=
 github.com/syndtr/goleveldb v1.0.0 h1:fBdIW9lB4Iz0n9khmH8w27SJ3QEJ7+IgjPEwGSZiFdE=
 github.com/syndtr/goleveldb v1.0.0/go.mod h1:ZVVdQEZoIme9iO1Ch2Jdy24qqXrMMOU6lpPAyBWyWuQ=
-github.com/treeforest/gossip v0.2.0 h1:uOjRdnY5nFrqwe9YLCA5tmGmASrXnKOs9K9cEFBYmBY=
-github.com/treeforest/gossip v0.2.0/go.mod h1:IzYR3qI3pGS/UaonaAi8vtUCOFy7X/Cz2N5YTU5X9sE=
-github.com/treeforest/logger v0.1.0 h1:XtIaPUoX7v/HOaBrO1NuKgD/fgqGHrDVXDeUUs0TzfM=
-github.com/treeforest/logger v0.1.0/go.mod h1:8no6Q+yOd0tIAt8BrWtG+gE2eQxIH1IP1tktrZ7qRLw=
+github.com/treeforest/gossip v0.2.4 h1:IYWgGTKIysWs1cKe0yCqvXaWkE1Nr6CM/fuh/8S7tus=
+github.com/treeforest/gossip v0.2.4/go.mod h1:Pn0cw1NH5qKiS1hr1W3ZuZsdTZZt0v6qXhB7ZTqyosE=
+github.com/treeforest/logger v0.2.0 h1:M95Ci7/tWHOJS/aONK+paWEVGBTZKecRnAB5f7vM9gE=
+github.com/treeforest/logger v0.2.0/go.mod h1:8no6Q+yOd0tIAt8BrWtG+gE2eQxIH1IP1tktrZ7qRLw=
 github.com/ugorji/go v1.1.7/go.mod h1:kZn38zHttfInRq0xu/PH0az30d+z6vm202qpg1oXVMw=
 github.com/ugorji/go/codec v1.1.7 h1:2SvQaVZ1ouYrrKKwoSk2pzd4A9evlKJb9oTL+OaLUSs=
 github.com/ugorji/go/codec v1.1.7/go.mod h1:Ax+UKWsSmolVDwsd+7N3ZtXu+yMGCf907BLYF3GoBXY=
