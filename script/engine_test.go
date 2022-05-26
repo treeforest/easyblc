@@ -8,22 +8,28 @@ import (
 )
 
 func BenchmarkEngine_Run(b *testing.B) {
-	w := wallet.New()
+	// 所有者
+	owner := wallet.New()
+
+	// 模拟的交易
 	mockTx := []byte("this is a mock transaction")
 
 	for i := 0; i < b.N; i++ {
-		sig, err := w.Sign(mockTx)
+		sig, err := owner.Sign(mockTx)
 		require.NoError(b, err)
 
+		// 上一笔交易的交易输出
 		output := []Op{
 			{Code: CHECKSIG, Data: nil},
 			{Code: EQUALVERIFY, Data: nil},
-			{Code: PUSH, Data: w.PubKeyHash160()},
+			{Code: PUSH, Data: owner.PubKeyHash160()},
 			{Code: HASH160, Data: nil},
 			{Code: DUP, Data: nil},
 		}
+
+		// 当前交易的交易输入
 		input := []Op{
-			{Code: PUSH, Data: w.PubKey()},
+			{Code: PUSH, Data: owner.PubKey()},
 			{Code: PUSH, Data: sig},
 		}
 

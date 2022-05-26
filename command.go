@@ -254,8 +254,8 @@ func (c *Command) send(from, to string, amount uint64) {
 	// 生成一个找零地址
 	addresses := mgr.Addresses()
 	rand.Seed(time.Now().UnixNano())
-	changeAddress := addresses[rand.Intn(len(addresses))]
-	log.Debug("随机找零地址：", changeAddress)
+	randAddress := addresses[rand.Intn(len(addresses))]
+	log.Debug("随机找零地址：", randAddress)
 
 	// 手续费
 	fee := uint64(0)
@@ -268,15 +268,15 @@ func (c *Command) send(from, to string, amount uint64) {
 	// 交易输出
 	log.Debug("create transaction output...")
 	var vouts []TxOutput
-	vout, err := NewTxOutput(amount, to)
+	vout, err := NewTxOutput(amount, to) // 交易输出
 	if err != nil {
 		log.Fatal("create tx vout failed:", err)
 	}
-	changeVout, err := NewTxOutput(balance-amount-fee, changeAddress)
+	feeVout, err := NewTxOutput(balance-amount-fee, randAddress) // 找零输出
 	if err != nil {
 		log.Fatal("create tx vout failed:", err)
 	}
-	vouts = append(vouts, []TxOutput{*vout, *changeVout}...)
+	vouts = append(vouts, []TxOutput{*vout, *feeVout}...)
 
 	// 构造交易
 	log.Debug("create transaction...")
