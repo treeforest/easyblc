@@ -51,7 +51,7 @@ func NewServer(logLevel log.Level, conf *config.Config, chain *BlockChain) *Serv
 		broadcasts:      make([][]byte, 1024),
 		chain:           chain,
 		metadata:        map[string]string{},
-		nodeType:        pb.NodeType(conf.Type),
+		nodeType:        conf.Type,
 		rewardAddress:   conf.RewardAddress,
 		startMiningChan: make(chan struct{}, 1),
 		stopMiningChan:  make(chan struct{}, 1),

@@ -62,6 +62,9 @@ func (tx *Transaction) HashTransaction() error {
 func (tx *Transaction) CalculateHash() ([32]byte, error) {
 	tmp := *tx
 	tmp.Hash = [32]byte{}
+	for i := 0; i < len(tx.Vins); i++ {
+		tmp.Vins[i].ScriptSig = []byte{}
+	}
 	data, err := json.Marshal(tmp)
 	if err != nil {
 		return [32]byte{}, err

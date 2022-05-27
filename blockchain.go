@@ -9,6 +9,7 @@ import (
 	"github.com/treeforest/easyblc/script"
 	log "github.com/treeforest/logger"
 	"math/big"
+	"os"
 	"sync"
 	"time"
 )
@@ -71,7 +72,9 @@ func MustGetExistBlockChain(dbPath string) *BlockChain {
 
 func CreateBlockChainWithGenesisBlock(dbPath, address string) *BlockChain {
 	if dao.IsNotExistDB(dbPath) {
-		log.Fatal("block database not exist")
+		if err := os.MkdirAll(dbPath, 7777); err != nil {
+			log.Fatal("block database not exist: ", err)
+		}
 	}
 
 	d := dao.New(dbPath)
@@ -419,14 +422,14 @@ func (chain *BlockChain) IsValidTx(tx *Transaction) (uint64, bool) {
 			log.Debug("invalid transaction input")
 			return 0, false
 		}
-		// 是否为有效地输入脚本
+		// 是否为有效地输入脚本格式
 		ok := script.IsValidScriptSig(vin.ScriptSig)
 		if !ok {
 			log.Debug("invalid scriptsig")
 			return 0, false
 		}
 		// 验证锁定脚本与解锁脚本 P2PKH
-		ok = script.Verify(vin.TxId, vin.ScriptSig, output.ScriptPubKey)
+		ok = script.Verify(tx.Hash, vin.ScriptSig, output.ScriptPubKey)
 		if !ok {
 			log.Debug("P2PKH verify failed")
 			return 0, false

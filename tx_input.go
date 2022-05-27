@@ -2,7 +2,7 @@ package blc
 
 import (
 	"crypto/ecdsa"
-	"fmt"
+	"github.com/pkg/errors"
 	"github.com/treeforest/easyblc/script"
 )
 
@@ -14,15 +14,11 @@ type TxInput struct {
 	CoinbaseData     []byte   // 创币交易（用户可以在这里写下任何东西，可辅助挖矿）
 }
 
-func NewTxInput(txId [32]byte, vout uint32, key *ecdsa.PrivateKey) (*TxInput, error) {
-	scriptSig, err := script.GenerateScriptSig(txId, key)
-	if err != nil {
-		return nil, fmt.Errorf("generate script sig failed:%v", err)
-	}
+func NewTxInput(txId [32]byte, vout uint32) (*TxInput, error) {
 	txInput := &TxInput{
 		TxId:             txId,
 		Vout:             vout,
-		ScriptSig:        scriptSig,
+		ScriptSig:        nil,
 		CoinbaseDataSize: 0,
 		CoinbaseData:     nil,
 	}
@@ -41,4 +37,14 @@ func NewCoinbaseTxInput(coinbaseData []byte) *TxInput {
 
 func (input *TxInput) IsCoinbase() bool {
 	return input.Vout == 0xFFFFFFFF
+}
+
+// SetScriptSig 设置输入脚本
+func (input *TxInput) SetScriptSig(hash [32]byte, key *ecdsa.PrivateKey) error {
+	scriptSig, err := script.GenerateScriptSig(hash, key)
+	if err != nil {
+		return errors.WithStack(err)
+	}
+	input.ScriptSig = scriptSig
+	return nil
 }

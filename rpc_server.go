@@ -118,7 +118,7 @@ func (s *rpcServer) PostTx(ctx context.Context, req *pb.PostTxReq) (*pb.PostTxRe
 		return &pb.PostTxResp{}, errors.New("format error")
 	}
 
-	if time.Now().UnixNano() > req.Tx.Timestamp {
+	if time.Now().UnixNano() < req.Tx.Timestamp {
 		return &pb.PostTxResp{}, errors.New("timestamp error")
 	}
 

@@ -376,7 +376,7 @@ func (m *Block) XXX_DiscardUnknown() {
 var xxx_messageInfo_Block proto.InternalMessageInfo
 
 func init() {
-	proto.RegisterEnum("NodeType", NodeType_name, NodeType_value)
+	proto.RegisterEnum("Type", NodeType_name, NodeType_value)
 	proto.RegisterType((*Message)(nil), "Message")
 	proto.RegisterType((*PullRequest)(nil), "PullRequest")
 	proto.RegisterMapType((map[string]Value)(nil), "PullRequest.TxHashesEntry")

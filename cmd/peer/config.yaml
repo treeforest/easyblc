@@ -1,22 +1,27 @@
-port: 3006
+# http server port that provides services externally
+http_server_port: 8080
 
-endpoint: localhost:3006
+# rpc server port that provides services externally
+rpc_server_port: 8081
 
-# 0: 全节点 1: 矿工节点 2: SPV
+# the path of leveldb that stores blockchain
+leveldb_path: "."
+
+# peer type, 0:FULL 1:Miner 2:SPV
 type: 1
 
-# 区块链数据库存储位置
-dbpath: ../blc
+# peer port
+port: 3006
 
-# 启动时连接的节点地址
-bootstrapPeers:
-#- 172.26.240.1:3007
+# peer exposed endpoint
+endpoint: localhost:3006
 
-# 获取挖矿奖励的地址
-rewardAddress: 1QCZvtyk5YeqxXVuqDZNa9toxiP1icDW1f
+# bootstrap peers
+bootstrap_peers:
+  #- "localhost:3007"
 
-# 矿工使用,默认为0。标识间隔多少个区块的时候开始同步（矿工可以选择继续挖自己的分叉链，如果有几率追上最长链）
-syncInterval: 3
+# peer sync block interval
+block_sync_interval: 0
 
-# http server 端口
-httpServerPort: 5999
+# address to receive coinbase reward
+reward_address: "1QCZvtyk5YeqxXVuqDZNa9toxiP1icDW1f"

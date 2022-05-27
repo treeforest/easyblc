@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"github.com/treeforest/easyblc/walletmgr/wallet"
 	"math/rand"
 	"os"
 	"strconv"
@@ -180,27 +181,8 @@ func (c *rpcClient) send(from, to, amount string, fee uint64) {
 		log.Fatal("输入金额小于输出金额")
 	}
 
-	vins := make([]TxInput, 0)
-	for _, addr := range inputAddrs {
-		utxo := c.getUtxo(addr)
-		if utxo == nil {
-			log.Fatalf("no utxo with address %s", addr)
-		}
-		wallet, err := mgr.GetWallet(addr)
-		if err != nil {
-			log.Fatal("not found wallet:", err)
-		}
-		for txHash, outputs := range utxo {
-			for index, _ := range outputs {
-				vin, err := NewTxInput(txHash, uint32(index), &wallet.Key)
-				if err != nil {
-					log.Fatal("create tx vin failed:", err)
-				}
-				vins = append(vins, *vin)
-			}
-		}
-	}
-
+	// 1.交易输出
+	// 1.1 构造交易输出
 	vouts := make([]TxOutput, 0)
 	for i, addr := range outputAddrs {
 		vout, err := NewTxOutput(uint64Amounts[i], addr)
@@ -209,10 +191,10 @@ func (c *rpcClient) send(from, to, amount string, fee uint64) {
 		}
 		vouts = append(vouts, *vout)
 	}
-
+	// 1.2 输入金额大于输出金额的部分就是找零金额
 	if inputAmount > (outputAmount + fee) {
 		log.Info("找零: ", inputAmount-(outputAmount+fee))
-		// 找零
+		// 生成随机找零地址
 		addrs := mgr.Addresses()
 		rand.Seed(time.Now().UnixNano())
 		addr := addrs[rand.Intn(len(addrs))] // 找零地址
@@ -223,11 +205,45 @@ func (c *rpcClient) send(from, to, amount string, fee uint64) {
 		vouts = append(vouts, *vout)
 	}
 
+	// 2. 交易输入
+	// 2.1 构造交易输入
+	vins := make([]TxInput, 0)
+	ws := make([]*wallet.Wallet, 0)
+	for _, addr := range inputAddrs {
+		utxo := c.getUtxo(addr)
+		if utxo == nil {
+			log.Fatalf("no utxo with address %s", addr)
+		}
+		w, err := mgr.GetWallet(addr)
+		if err != nil {
+			log.Fatal("not found wallet:", err)
+		}
+		ws = append(ws, w) // 记录待会要进行签名的钱包
+		for txHash, outputs := range utxo {
+			for index, _ := range outputs {
+				vin, err := NewTxInput(txHash, uint32(index))
+				if err != nil {
+					log.Fatal("create tx vin failed:", err)
+				}
+				vins = append(vins, *vin)
+			}
+		}
+	}
+
+	// 3. 生成交易
 	tx, err := NewTransaction(vins, vouts)
 	if err != nil {
 		log.Fatal("create transaction failed:", err)
 	}
 
+	// 4. 设置交易输入脚本
+	for i := 0; i < len(tx.Vins); i++ {
+		if err = tx.Vins[i].SetScriptSig(tx.Hash, &ws[i].Key); err != nil {
+			log.Fatal(err)
+		}
+	}
+
+	// 5. 将交易放入交易池
 	c.postTx(tx)
 }
 

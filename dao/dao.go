@@ -31,7 +31,7 @@ type DAO struct {
 }
 
 func New(dbPath string) *DAO {
-	log.Debug("db path:", filepath.Join(dbPath, dbName))
+	log.Debug("db path:", filepath.Join(filepath.Base(dbPath), dbName))
 	levelDB, err := leveldb.OpenFile(filepath.Join(dbPath, dbName), &opt.Options{})
 	if err != nil {
 		log.Fatalf("open blc [%s] error [%v]", dbName, err)

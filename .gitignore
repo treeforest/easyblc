@@ -4,3 +4,5 @@ cmd/blc/
 cmd/client/wallets.bat
 cmd/peer/peer.exe
 cmd/test/
+cmd/command/blc.db
+cmd/command/wallets.bat

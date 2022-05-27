@@ -1,23 +1,6 @@
 # EASYBLC
 This is an easy blockchain implement with Go.
 
-## TODO
-
-- [x] blockchain/block
-- [x] merkle tree/merkle proof
-- [x] base58/base58check
-- [x] script P2PKH
-- [x] wallet/wallet managr
-- [x] UTXO
-- [x] pow/difficulty adjust
-- [x] transaction pool with priority queue
-- [x] p2p network(gossip)
-- [x] web server
-- [x] command
-- [x] rpc server
-- [ ] Bloom filter
-- [ ] smart contract
-- [ ] DAG
 
 ## Usage
 
@@ -85,7 +68,7 @@ cd cmd/client && go run main.go send -from "17Hth78RStKxzD3MCtwmTNJZpZMrro63S7,1
 blockchain:
         Height:1
         Hash:00000000b03232b62dc54641c91efb399ce8b3055454836db84ec4284e75178f
-        PrevkHash:0000000023b635b886536e6b14c6ccf13fe62f21d12f532f23c210a06cd2deb6
+        PreHash:0000000023b635b886536e6b14c6ccf13fe62f21d12f532f23c210a06cd2deb6
         Time:1648305961951000400
         Nonce:2305843009842186445
         MerkelRoot:905c3afdf14af63902dd36f21c01975fe718ecdaecfb6a1386553922ed6ebc66
@@ -120,7 +103,7 @@ blockchain:
 
         Height:0
         Hash:0000000023b635b886536e6b14c6ccf13fe62f21d12f532f23c210a06cd2deb6
-        PrevkHash:
+        PreHash:
         Time:1648293507383649400
         Nonce:452081398
         MerkelRoot:8060d58e4f63b0a76f425de8ef3592c9cab0a50865957560070cb0bf5bef2d7d
@@ -138,6 +121,23 @@ blockchain:
                         address: 13dSQiFAuVUF8T461xDXFWmXMsv8c1w68E
                         scriptPubKey: 0dff83020102ff840001ff82000022ff81030101024f7001ff820001020104436f6465010600010444617461010a00000029ff840005010e00010d00010b01141cd46fb7edaf208389a35b31e1a8f65d12c230f900010c00010a00
 ```
+## TODO
+
+- [x] blockchain/block
+- [x] merkle tree/merkle proof
+- [x] base58/base58check
+- [x] script P2PKH
+- [x] wallet/wallet managr
+- [x] UTXO
+- [x] pow/difficulty adjust
+- [x] transaction pool with priority queue
+- [x] p2p network(gossip)
+- [x] web server
+- [x] command
+- [x] rpc server
+- [ ] Bloom filter
+- [ ] smart contract
+- [ ] DAG
 
 
  

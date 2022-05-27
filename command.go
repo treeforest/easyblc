@@ -35,7 +35,7 @@ func (c *Command) printUsage() {
 	// 挖矿
 	fmt.Printf("\tmining -address ADDRESS -t T -- 开始挖矿\n")
 	fmt.Printf("\t\t-address -- 接收挖矿奖励地址\n")
-	fmt.Printf("\t\t-t -- 挖矿个数\n")
+	fmt.Printf("\t\t-n -- 挖矿个数\n")
 	// 钱包
 	fmt.Printf("\tcreatewallet -- 创建钱包\n")
 	fmt.Printf("\tremovewallet -- 删除钱包\n")
@@ -211,7 +211,7 @@ func (c *Command) mining(address string, n int) {
 }
 
 func (c *Command) send(from, to string, amount uint64) {
-	// 检查地址格式
+	// 1. 检查地址格式
 	if !IsValidAddress(from) {
 		log.Fatal("FROM is not a valid address")
 	}
@@ -219,7 +219,7 @@ func (c *Command) send(from, to string, amount uint64) {
 		log.Fatal("TO is not a valid address")
 	}
 
-	// 检查from是否是钱包地址
+	// 2. 检查from是否是钱包地址
 	mgr := walletmgr.New()
 	if !mgr.Has(from) {
 		log.Fatal("you don't have the wallet that address is ", from)
@@ -232,32 +232,21 @@ func (c *Command) send(from, to string, amount uint64) {
 	bc := MustGetExistBlockChain(c.dbPath)
 	defer bc.Close()
 
-	// 检查余额
+	// 3. 检查余额
 	log.Debug("check balance...")
 	balance := bc.GetBalance(from)
 	if balance < amount {
 		log.Fatal("lack of balance")
 	}
 
-	// 交易输入
-	log.Debug("check utxo...")
-	var vins []TxInput
-	utxoSet := bc.GetUTXOSet(from)
-	utxoSet.Traverse(func(txHash [32]byte, index int, output TxOutput) {
-		vin, err := NewTxInput(txHash, uint32(index), &wallet.Key)
-		if err != nil {
-			log.Fatal("create tx vin failed:", err)
-		}
-		vins = append(vins, *vin)
-	})
-
-	// 生成一个找零地址
+	// 4. 找零
+	// 4.1 生成一个找零地址
 	addresses := mgr.Addresses()
 	rand.Seed(time.Now().UnixNano())
 	randAddress := addresses[rand.Intn(len(addresses))]
 	log.Debug("随机找零地址：", randAddress)
 
-	// 手续费
+	// 4.2 手续费，默认最多50聪
 	fee := uint64(0)
 	if balance-amount > 50 {
 		fee = 50
@@ -265,7 +254,7 @@ func (c *Command) send(from, to string, amount uint64) {
 	log.Debug("找零:", balance-amount-fee)
 	log.Debug("手续费:", fee)
 
-	// 交易输出
+	// 5. 构建交易输出
 	log.Debug("create transaction output...")
 	var vouts []TxOutput
 	vout, err := NewTxOutput(amount, to) // 交易输出
@@ -278,14 +267,33 @@ func (c *Command) send(from, to string, amount uint64) {
 	}
 	vouts = append(vouts, []TxOutput{*vout, *feeVout}...)
 
-	// 构造交易
+	// 6. 构建不带有输入脚本的交易输入
+	log.Debug("check utxo...")
+	var vins []TxInput
+	utxoSet := bc.GetUTXOSet(from)
+	utxoSet.Traverse(func(txHash [32]byte, index int, output TxOutput) {
+		vin, err := NewTxInput(txHash, uint32(index))
+		if err != nil {
+			log.Fatal("create tx vin failed:", err)
+		}
+		vins = append(vins, *vin)
+	})
+
+	// 7. 构造交易
 	log.Debug("create transaction...")
 	tx, err := NewTransaction(vins, vouts)
 	if err != nil {
 		log.Fatal("create transaction failed:", err)
 	}
 
-	// 将交易放入交易池
+	// 8. 设置交易输入的输入脚本
+	for i := 0; i < len(tx.Vins); i++ {
+		if err = tx.Vins[i].SetScriptSig(tx.Hash, &wallet.Key); err != nil {
+			log.Fatal(err)
+		}
+	}
+
+	// 9. 将交易放入交易池
 	log.Debug("put transaction to txpool...")
 	if err = bc.AddToTxPool(*tx); err != nil {
 		log.Fatal("put tx to pool failed:", err)
@@ -338,7 +346,7 @@ func (c *Command) printChain() {
 	err := bc.Traverse(func(block *Block) bool {
 		fmt.Printf("\tHeight:%d\n", block.Height)
 		fmt.Printf("\tHash:%x\n", block.Hash)
-		fmt.Printf("\tPrevkHash:%x\n", block.PreHash)
+		fmt.Printf("\tPreHash:%x\n", block.PreHash)
 		fmt.Printf("\tTime:%v\n", block.Time)
 		fmt.Printf("\tNonce:%d\n", block.Nonce)
 		fmt.Printf("\tMerkelRoot:%x\n", block.MerkelRoot)

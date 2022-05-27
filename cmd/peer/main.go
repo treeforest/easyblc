@@ -9,18 +9,18 @@ import (
 func main() {
 	log.SetLevel(log.DEBUG)
 
-	conf, err := config.Load()
+	conf, err := config.Load("config.yaml")
 	if err != nil {
-		log.Fatal("load config failed")
+		log.Fatalf("load config error: +v", err)
 	}
-	// _ = os.RemoveAll("blc.db")
-	chain := blc.GetBlockChain(conf.DBPath)
+
+	chain := blc.GetBlockChain(conf.LevelDBPath)
 
 	httpSrv := blc.NewHttpServer(conf.HttpServerPort, chain)
 	go httpSrv.Run()
 
-	//rpcSrv := blc.RunRpcSerer(conf.HttpServerPort+1, chain)
-	//defer rpcSrv.Stop()
+	rpcSrv := blc.RunRpcSerer(conf.RpcServerPort, chain)
+	defer rpcSrv.Stop()
 
 	peer := blc.NewServer(log.INFO, conf, chain)
 	peer.Run()
