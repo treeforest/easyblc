@@ -4,64 +4,54 @@ This is an easy BTC implement by Go, ant it's a good model for learning blockcha
 
 ## Usage
 
-### 启动区块链节点
+### config
 
-* 节点配置文件
 ```yaml
-# 节点监听端口
+# http server port that provides services externally
+http_server_port: 8080
+
+# rpc server port that provides services externally
+rpc_server_port: 8081
+
+# the path of leveldb that stores blockchain
+leveldb_path: "."
+
+# peer type, 0:FULL 1:Miner 2:SPV
+type: 1
+
+# peer port
 port: 3006
 
-# 0: 全节点 1: 矿工节点 2: SPV
-type: 0
+# peer exposed endpoint
+endpoint: localhost:3006
 
-# 矿工地址
-address: 1QCZvtyk5YeqxXVuqDZNa9toxiP1icDW1f
+# bootstrap peers
+bootstrap_peers:
+#- "localhost:3007"
+#- "localhost:3008"
 
-# 矿工使用,默认为0。标识间隔多少个区块的时候开始同步（矿工可以选择继续挖自己的分叉链，如果有几率追上最长链）
-syncinterval: 1
+# peer sync block interval
+block_sync_interval: 0
 
-# 区块链数据库存储位置
-dbpath: ../blc
-
-# 已存在的节点地址
-existing:
-  - 172.26.240.1:3007
-
-# http server 端口
-httpserverport: 5999
+# address to receive coinbase reward
+reward_address: "1QCZvtyk5YeqxXVuqDZNa9toxiP1icDW1f"
 ```
 
-* 启动节点
-```bash
-cd cmd/peer && go run main.go -conf config.yaml
-```
+### start
 
-### HTTP 客户端调用
+There are two ways to start a blockchain:  one peer based on command or many peers based on gossip network.
 
-* 客户端命令
+1. one peer based on command
 
-```
-Usage:
-        height -- 打印区块链高度
-        printchain -- 输出区块链信息
-        send -from FROM -to TO -amount AMOUNT -- 发起转账
-                -from FROM -- 转账源地址,多个时采用,分割
-                -to TO -- 转账目标地址,多个时采用,分割
-                -amount AMOUNT -- 转账金额,多个时采用,分割
-                -fee FEE -- 支付的手续费
-        createwallet -- 创建钱包
-        removewallet -address ADDRESS -- 删除钱包
-                -address ADDRESS -- 钱包地址
-        addresses -- 获取钱包地址列表
-        allbalance -- 获取所有的余额    balance -address ADDRESS -- 获取钱包余额
-                -address ADDRESS -- 钱包地址
-        txpool -- 获取交易池内的交易信息
-```
+   ```go
+   cd cmd/command && go run main.go
+   ```
 
-* 转账示例
-```go
-cd cmd/client && go run main.go send -from "17Hth78RStKxzD3MCtwmTNJZpZMrro63S7,13dSQiFAuVUF8T461xDXFWmXMsv8c1w68E" -to "1N8qJzfCx8sA4NHKaVNCHp6S45cbbWvMEW" -amount 400000000 -fee 50000 
-```
+2. many peers based on gossip network
+
+   ```go
+   cd cmd/peer && go run main.go
+   ```
 
 ## blockchain with two blocks
 ```
@@ -140,4 +130,4 @@ blockchain:
 - [ ] DAG
 
 
- 
+
