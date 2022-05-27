@@ -1,5 +1,5 @@
 # EASYBLC
-This is an easy blockchain implement with Go.
+This is an easy BTC implement by Go, ant it's a good model for learning blockchain.
 
 
 ## Usage
